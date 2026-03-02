@@ -16,13 +16,17 @@ var ft8 = {
       'FT8': [ '1840', '3573', '5357', '7074', '10136', '14074', '18100', '21074', '24915', '28074', '50313', '40680', '60074' ],
       'FT4': [ '3575.5', '7047.5', '10140', '14080', '18104', '21140', '24919', '28180', '50318' ]
    },
+
    PASSBAND_LO: 100,
    PASSBAND_HI: 3100,
 
-   // must set "remove_returns" so output lines with \r\n (instead of \n alone) don't produce double spacing
    console_status_msg_p: {
-      no_decode: true, scroll_only_at_bottom: true, process_return_alone: false, remove_returns: true,
-      cols: 135, max_lines: 1024
+      no_decode: true,
+      scroll_only_at_bottom: true,
+      process_return_alone: false,
+      remove_returns: true,
+      cols: 135,
+      max_lines: 1024
    },
 
    log_mins: 0,
@@ -31,11 +35,27 @@ var ft8 = {
 
    // order matches FT8.cpp:ft8_cfs[]
    // only add new entries to the end so as not to disturb existing values stored in config
-   // yes, there are really no assigned FT4 freqs for 160m and 60m
    autorun_u: [
       'regular use',
-      'FT8-160m', 'FT8-80m', 'FT8-60m', 'FT8-40m', 'FT8-30m', 'FT8-20m', 'FT8-17m', 'FT8-15m', 'FT8-12m', 'FT8-10m', 'FT8-6m', 'FT8-8m*', 'FT8-5m*',
-                  'FT4-80m',            'FT4-40m', 'FT4-30m', 'FT4-20m', 'FT4-17m', 'FT4-15m', 'FT4-12m', 'FT4-10m', 'FT4-6m'
+
+      // FT8 standard
+      'FT8-160m', 'FT8-80m', 'FT8-60m', 'FT8-40m', 'FT8-30m', 'FT8-20m',
+      'FT8-17m', 'FT8-15m', 'FT8-12m', 'FT8-10m',
+      'FT8-6m', 'FT8-8m*', 'FT8-5m*',
+
+      // FT4
+                  'FT4-80m',            'FT4-40m', 'FT4-30m', 'FT4-20m',
+                  'FT4-17m', 'FT4-15m', 'FT4-12m', 'FT4-10m', 'FT4-6m',
+
+      // FT8 DXped (APPENDED)
+      'FT8-80m-DX',
+      'FT8-40m-DX',
+      'FT8-30m-DX',
+      'FT8-20m-DX',
+      'FT8-17m-DX',
+      'FT8-15m-DX',
+      'FT8-12m-DX',
+      'FT8-10m-DX'
    ],
 
    PREEMPT_NO: 0,
