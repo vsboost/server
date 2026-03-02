@@ -39,23 +39,23 @@ var ft8 = {
       'regular use',
 
       // FT8 standard
-      'FT8-160m', 'FT8-80m', 'FT8-60m', 'FT8-40m', 'FT8-30m', 'FT8-20m',
-      'FT8-17m', 'FT8-15m', 'FT8-12m', 'FT8-10m',
-      'FT8-6m', 'FT8-8m*', 'FT8-5m*',
+'FT8-160m', 'FT8-80m', 'FT8-60m', 'FT8-40m', 'FT8-30m', 'FT8-20m',
+'FT8-17m', 'FT8-15m', 'FT8-12m', 'FT8-10m',
+'FT8-6m', 'FT8-8m*', 'FT8-5m*',
 
-      // FT4
-                  'FT4-80m',            'FT4-40m', 'FT4-30m', 'FT4-20m',
-                  'FT4-17m', 'FT4-15m', 'FT4-12m', 'FT4-10m', 'FT4-6m',
+// FT8 DXped (Expeditions)
+'FT8-80m-DX',
+'FT8-40m-DX',
+'FT8-30m-DX',
+'FT8-20m-DX',
+'FT8-17m-DX',
+'FT8-15m-DX',
+'FT8-12m-DX',
+'FT8-10m-DX',
 
-      // FT8 DXped (APPENDED)
-      'FT8-80m-DX',
-      'FT8-40m-DX',
-      'FT8-30m-DX',
-      'FT8-20m-DX',
-      'FT8-17m-DX',
-      'FT8-15m-DX',
-      'FT8-12m-DX',
-      'FT8-10m-DX'
+// FT4
+'FT4-80m', 'FT4-40m', 'FT4-30m', 'FT4-20m',
+'FT4-17m', 'FT4-15m', 'FT4-12m', 'FT4-10m', 'FT4-6m'
    ],
 
    PREEMPT_NO: 0,
