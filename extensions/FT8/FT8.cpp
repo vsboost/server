@@ -317,11 +317,15 @@ bool ft8_update_vars_from_config(bool called_at_init_or_restart)
 static double ft8_cfs[] = {     // usb carrier/dial freq
     /* FT8 */ 1840, 3573, 5357, 7074,   10136, 14074, 18100, 21074, 24915, 28074, 50313, 40680, 60074,
     /* FT4 */       3575.5,     7047.5, 10140, 14080, 18104, 21140, 24919, 28180, 50318,
+
+    /* FT8 DXped */ 3567, 7064, 10131, 14090, 18095, 21091, 24911, 28091
 };
 
 static const char* ft8_name[] = {
     "160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m", "8m*", "5m*",
-            "80m",        "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"
+            "80m",        "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m",
+
+    "80m-DX", "40m-DX", "30m-DX", "20m-DX", "17m-DX", "15m-DX", "12m-DX", "10m-DX"
 };
 
 void ft8_update_spot_count(int rx_chan, u4_t spot_count)
