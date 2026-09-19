@@ -72,6 +72,11 @@ template <typename T>
 void CwDecoder<T>::reset() {
     std::lock_guard<std::mutex> lock(this->processMutex);
 
+    // Reset the sample clock as well, so the next edge is timed from this reset.
+    curSeconds = 0;
+    curSamples = 0;
+    lastDebugT = 0;
+
     // Input signal characteristics
     realState0 = false; // Last unfiltered signal state (0/1)
     filtState0 = false; // Last filtered signal state (0/1)

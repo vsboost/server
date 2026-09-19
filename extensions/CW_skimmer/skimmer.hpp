@@ -19,6 +19,7 @@
 #define AVG_SECONDS  (3)
 #define NEIGH_WEIGHT (0.5)
 #define THRES_WEIGHT (6.0)
+#define OUTPUT_BUFFER_SIZE (32)
 
 #include <functional>
 typedef std::function<void(int, char, int)> OutputCallback;
@@ -39,7 +40,7 @@ public:
         for (int j = 0; j < MAX_CHANNELS; ++j) {
             in[j] = new Csdr::Ringbuffer<float>(sampleRate);
             inReader[j] = new Csdr::RingbufferReader<float>(in[j]);
-            out[j] = new Csdr::Ringbuffer<unsigned char>(printChars * 4);
+            out[j] = new Csdr::Ringbuffer<unsigned char>(OUTPUT_BUFFER_SIZE);
             outReader[j] = new Csdr::RingbufferReader<unsigned char>(out[j]);
             cwDecoder[j] = new Csdr::CwDecoder<float>(sampleRate, false);
             cwDecoder[j]->setReader(inReader[j]);
@@ -136,8 +137,6 @@ private:
     bool filter_neighbors;
     unsigned int sampleRate;
 
-    unsigned int printChars = 8; // Number of characters to print at once
-
     fftwf_complex fftOut[MAX_INPUT];
     float dataBuf[MAX_INPUT];
     float fftIn[MAX_INPUT];
@@ -195,7 +194,7 @@ private:
             int count;
         } scales[MAX_SCALES];
 
-        // Sort buckets into scales
+        // Sort buckets into scales.
         memset(scales, 0, sizeof(scales));
         for (j = 0, maxPower = 0.0; j < MAX_INPUT / 2; ++j) {
             float v = fftOut[j][0];
@@ -207,13 +206,13 @@ private:
             scales[scale].count++;
         }
 
-        // Find most populated scales and use them for ground power
+        // Find most populated scales and use them for ground power.
         for (i = 0, n = 0, accPower = 0.0; i < MAX_SCALES - 1; ++i) {
-            // Look for the next most populated scale
+            // Look for the next most populated scale.
             for (k = i, j = i + 1; j < MAX_SCALES; ++j)
                 if (scales[j].count > scales[k].count)
                     k = j;
-            // If found, swap with current one
+            // If found, swap with current one.
             if (k != i) {
                 float v = scales[k].power;
                 j = scales[k].count;
@@ -221,17 +220,15 @@ private:
                 scales[i].power = v;
                 scales[i].count = j;
             }
-            // Keep track of the total number of buckets
+            // Keep track of the total number of buckets.
             accPower += scales[i].power;
             n += scales[i].count;
-            // Stop when we collect 1/2 of all buckets
+            // Stop when we collect 1/2 of all buckets.
             if (n >= MAX_INPUT / 2 / 2)
                 break;
         }
 
-        // fprintf(stderr, "accPower = %f (%d buckets, %d%%)\n", accPower/n, i+1, 100*n*2/MAX_INPUT);
-
-        // Maintain rolling average over AVG_SECONDS
+        // Maintain rolling average over AVG_SECONDS.
         accPower /= n;
         avgPower += (accPower - avgPower) * INPUT_STEP / sampleRate / AVG_SECONDS;
 
@@ -243,22 +240,21 @@ private:
             if (k >= MAX_INPUT / 2) {
                 switch(pwr_calc) {
                 case PWR_CALC_AVG_RATIO:
-                    // Divide channel signal by the average power
+                    // Divide channel signal by the average power.
                     accPower = fmaxf(1.0, accPower / fmaxf(avgPower, 0.000001));
                     break;
                 case PWR_CALC_AVG_BOTTOM:
-                    // Subtract average power from the channel signal
+                    // Subtract average power from the channel signal.
                     accPower = fmaxf(0.0, accPower - avgPower);
                     break;
                 case PWR_CALC_THRESHOLD:
-                    // Convert channel signal to 1/0 values based on threshold
+                    // Convert channel signal to 1/0 values based on threshold.
                     accPower = accPower >= avgPower * THRES_WEIGHT ? 1.0f : 0.0f;
                     break;
                 }
 
                 dbgOut[i] = accPower < 0.5 ? '.' : '0' + round(fmax(fmin(accPower / maxPower * 10.0, 9.0), 0.0));
 
-                // If CW input buffer can accept samples...
                 if (in[i]->writeable() >= INPUT_STEP) {
                     // Fill input buffer with computed signal power
                     float* dst = in[i]->getWritePointer();
@@ -271,7 +267,7 @@ private:
                         cwDecoder[i]->process();
 
                     // Print output
-                    printOutput(i, i * sampleRate / 2 / MAX_CHANNELS, printChars);
+                    printOutput(i, i * sampleRate / 2 / MAX_CHANNELS);
                 }
 
                 // Start on a new channel
@@ -294,10 +290,9 @@ private:
 
     // Print output from ith decoder
     void
-    printOutput(int i, unsigned int freq, unsigned int printChars) {
-        // Must have a minimum of printChars
+    printOutput(int i, unsigned int freq) {
         size_t n = outReader[i]->available();
-        if (n < printChars) return;
+        if (n == 0) return;
         int wpm = cwDecoder[i]->getWPM();
 
         // Print characters

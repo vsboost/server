@@ -299,6 +299,26 @@ if(NATIVE_HARNESS)
     target_include_directories(test_airband_si5351 PRIVATE "${UPSTREAM_DIR}")
     add_test(NAME airband_si5351 COMMAND test_airband_si5351)
 
+    add_executable(test_cw_skimmer_replay
+        tests/test_cw_skimmer_replay.cpp
+        extensions/CW_skimmer/csdr/cw.cpp
+        extensions/CW_skimmer/csdr/module.cpp
+        extensions/CW_skimmer/csdr/ringbuffer.cpp
+        extensions/CW_skimmer/csdr/sink.cpp
+        extensions/CW_skimmer/csdr/source.cpp
+        extensions/CW_skimmer/csdr/writer.cpp
+    )
+    target_include_directories(test_cw_skimmer_replay PRIVATE
+        "${UPSTREAM_DIR}"
+        ${FFTW3_INCLUDE_DIRS}
+    )
+    target_link_libraries(test_cw_skimmer_replay PRIVATE libfftw3f.a)
+    add_test(
+        NAME cw_skimmer_replay
+        COMMAND test_cw_skimmer_replay
+            "${UPSTREAM_DIR}/unix_env/kiwi.config/samples/CW.test.au"
+    )
+
     find_program(NODE_COMMAND NAMES node REQUIRED)
     add_test(
         NAME native_mqtt
