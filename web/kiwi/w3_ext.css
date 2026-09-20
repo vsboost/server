@@ -207,6 +207,9 @@ input[type=range]::-moz-range-thumb {
 .w3-text-output pre
 {
     margin: 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: anywhere;
 }
 
 .w3-text-output-striped pre:nth-child(even)
