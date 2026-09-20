@@ -42,6 +42,7 @@ def main():
     parser.add_argument("--decoder", required=True)
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--confidence", type=float)
+    parser.add_argument("--stream", action="store_true")
     args = parser.parse_args()
 
     total_distance = 0
@@ -58,6 +59,10 @@ def main():
         ]
         if args.confidence is not None:
             command.append(str(args.confidence))
+        if args.stream:
+            if args.confidence is None:
+                command.append("4")
+            command.extend(("0", "--stream"))
         result = subprocess.run(command, text=True, capture_output=True)
         actual = result.stdout.strip()
         normalized_expected = normalize(expected)

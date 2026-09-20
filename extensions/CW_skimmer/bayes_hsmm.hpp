@@ -20,6 +20,7 @@ public:
     };
 
     struct Workspace {
+        double input[MAX_TICKS];
         double ordered[MAX_TICKS];
         double prefix[2][MAX_TICKS + 1];
         double score[2][MAX_TICKS];
@@ -42,14 +43,15 @@ public:
     {}
 
     int decode(const double* envelope, int count, char* output, int outputSize,
-        Metrics* metrics = NULL) const
+        Metrics* metrics = NULL, int* endTicks = NULL) const
     {
         Workspace workspace;
-        return decode(envelope, count, output, outputSize, workspace, metrics);
+        return decode(envelope, count, output, outputSize, workspace, metrics,
+            endTicks);
     }
 
     int decode(const double* envelope, int count, char* output, int outputSize,
-        Workspace& workspace, Metrics* metrics = NULL) const
+        Workspace& workspace, Metrics* metrics = NULL, int* endTicks = NULL) const
     {
         if (metrics) {
             metrics->modelGain = 0.0;
@@ -175,8 +177,10 @@ public:
         int written = 0;
         double estimatedDitTicks = 0.0;
         int estimatedDitCount = 0;
+        int timelineTick = first;
         for (int i = segmentCount - 1; i >= 0; --i) {
             double units = segments[i].duration / ditTicks;
+            timelineTick += segments[i].duration;
             if (segments[i].state) {
                 bool isDot = std::fabs(units - 1.0) < std::fabs(units - 3.0);
                 if (symbolCount < (int) sizeof(symbols) - 1)
@@ -189,11 +193,14 @@ public:
                 symbols[symbolCount] = '\0';
                 if (characterTicks != 0 &&
                     characterEvidence / characterTicks >= minimumConfidence)
-                    append(output, outputSize, written, lookup(symbols));
+                    append(output, outputSize, written, lookup(symbols),
+                        endTicks, timelineTick);
                 symbolCount = 0;
                 characterEvidence = 0.0;
                 characterTicks = 0;
-                if (units >= 5.5) append(output, outputSize, written, ' ');
+                if (units >= 5.5)
+                    append(output, outputSize, written, ' ', endTicks,
+                        timelineTick + 1);
             } else if (symbolCount != 0) {
                 characterEvidence += segments[i].evidence;
                 characterTicks += segments[i].duration;
@@ -203,7 +210,8 @@ public:
             symbols[symbolCount] = '\0';
             if (characterTicks != 0 &&
                 characterEvidence / characterTicks >= minimumConfidence)
-                append(output, outputSize, written, lookup(symbols));
+                append(output, outputSize, written, lookup(symbols), endTicks,
+                    timelineTick);
         }
         output[written] = '\0';
         if (metrics) {
@@ -220,7 +228,8 @@ public:
 
     static int decodeBest(const double* envelope, int count, char* output,
         int outputSize, Workspace& workspace, int& wpm,
-        double minimumConfidence = 4.0)
+        double minimumConfidence = 4.0, int* endTicks = NULL,
+        int* modelWpm = NULL)
     {
         static const int speeds[] = { 10, 12, 15, 18, 20, 24, 28, 32, 36, 40 };
         double bestQuality = -1e30;
@@ -231,8 +240,9 @@ public:
             BayesHsmm decoder(speeds[i], minimumConfidence);
             Metrics metrics;
             char candidate[MAX_OUTPUT];
+            int candidateEndTicks[MAX_OUTPUT];
             int length = decoder.decode(envelope, count, candidate,
-                sizeof(candidate), workspace, &metrics);
+                sizeof(candidate), workspace, &metrics, candidateEndTicks);
             double quality = metrics.modelGain -
                 0.05 * metrics.unknownCharacters - (length == 0 ? 1.0 : 0.0);
             if (quality > bestQuality) {
@@ -240,7 +250,11 @@ public:
                 bestLength = std::min(length, outputSize - 1);
                 std::memcpy(output, candidate, bestLength);
                 output[bestLength] = '\0';
+                if (endTicks)
+                    std::memcpy(endTicks, candidateEndTicks,
+                        bestLength * sizeof(endTicks[0]));
                 wpm = metrics.estimatedWpm ? metrics.estimatedWpm : speeds[i];
+                if (modelWpm) *modelWpm = speeds[i];
             }
         }
         return bestLength;
@@ -298,9 +312,14 @@ private:
         return best;
     }
 
-    static void append(char* output, int outputSize, int& written, char value)
+    static void append(char* output, int outputSize, int& written, char value,
+        int* endTicks, int endTick)
     {
-        if (written + 1 < outputSize) output[written++] = value;
+        if (written + 1 < outputSize) {
+            output[written] = value;
+            if (endTicks) endTicks[written] = endTick;
+            written++;
+        }
     }
 
     static char lookup(const char* symbols)

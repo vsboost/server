@@ -48,6 +48,7 @@ def main():
     parser.add_argument("--decoder", required=True)
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--confidence", type=float, default=4.0)
+    parser.add_argument("--stream", action="store_true")
     args = parser.parse_args()
 
     total_distance = 0
@@ -59,7 +60,7 @@ def main():
                   errors="ignore") as source:
             expected = normalize(source.read())
         for offset in OFFSETS:
-            result = subprocess.run([
+            command = [
                 args.decoder,
                 os.path.join(args.corpus, wav),
                 "750",
@@ -67,7 +68,12 @@ def main():
                 "-",
                 str(args.confidence),
                 str(offset),
-            ], text=True, capture_output=True, check=True)
+            ]
+            if args.stream:
+                command.append("--stream")
+            result = subprocess.run(
+                command, text=True, capture_output=True, check=True
+            )
             actual = normalize(result.stdout)
             cases += 1
             if not actual:

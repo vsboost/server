@@ -1,4 +1,5 @@
 #include "extensions/CW_skimmer/bayes_hsmm.hpp"
+#include "extensions/CW_skimmer/bayes_stream.hpp"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -143,16 +144,18 @@ static int makeEnvelope(const std::vector<int16_t>& samples,
 
 int main(int argc, char** argv)
 {
-    if (argc < 5 || argc > 7) {
+    if (argc < 5 || argc > 8) {
         fprintf(stderr,
-            "usage: %s WAV FREQ_HZ WPM EXPECTED [MIN_CONFIDENCE [OFFSET_SECONDS]]\n",
+            "usage: %s WAV FREQ_HZ WPM EXPECTED "
+            "[MIN_CONFIDENCE [OFFSET_SECONDS [--stream]]]\n",
             argv[0]);
         return 2;
     }
+    bool stream = argc == 8 && strcmp(argv[7], "--stream") == 0;
 
     std::vector<int16_t> samples;
     unsigned int sampleRate = 0;
-    double offsetSeconds = argc == 7 ? atof(argv[6]) : 0.0;
+    double offsetSeconds = argc >= 7 ? atof(argv[6]) : 0.0;
     if (!readWav(argv[1], samples, sampleRate, offsetSeconds)) {
         fprintf(stderr, "unable to read %s\n", argv[1]);
         return 2;
@@ -160,9 +163,31 @@ int main(int argc, char** argv)
 
     double envelope[BayesHsmm::MAX_TICKS];
     double wpm = atof(argv[3]);
+    int count = makeEnvelope(samples, sampleRate, atof(argv[2]),
+        wpm > 0.0 ? wpm : 20.0, envelope);
     char output[BayesHsmm::MAX_OUTPUT];
-    if (wpm > 0.0) {
-        int count = makeEnvelope(samples, sampleRate, atof(argv[2]), wpm, envelope);
+    if (stream) {
+        BayesHsmm::Workspace workspace;
+        BayesCwStream decoder(workspace);
+        int written = 0;
+        int estimatedWpm = 0;
+        for (int i = 0; i < count; ++i) {
+            char current[BayesHsmm::MAX_OUTPUT];
+            int length = decoder.add(envelope[i], current, sizeof(current),
+                estimatedWpm);
+            int copy = std::min(length,
+                (int) sizeof(output) - written - 1);
+            memcpy(output + written, current, copy);
+            written += copy;
+        }
+        char current[BayesHsmm::MAX_OUTPUT];
+        int length = decoder.flush(current, sizeof(current), estimatedWpm);
+        int copy = std::min(length, (int) sizeof(output) - written - 1);
+        memcpy(output + written, current, copy);
+        written += copy;
+        output[written] = '\0';
+        fprintf(stderr, "stream estimated WPM %d\n", estimatedWpm);
+    } else if (wpm > 0.0) {
         BayesHsmm decoder(wpm, argc >= 6 ? atof(argv[5]) : 0.0);
         decoder.decode(envelope, count, output, sizeof(output));
     } else {
