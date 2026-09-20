@@ -30,15 +30,21 @@ public:
         modelWpm = 0;
         intervalsSinceSelection = 0;
         recentCount = 0;
+        lastDecoded[0] = '\0';
     }
 
-    int add(double value, char* output, int outputSize, int& wpm)
+    void push(double value)
     {
         history[writePosition] = (float) value;
         writePosition = (writePosition + 1) % WINDOW_TICKS;
         if (available < WINDOW_TICKS) available++;
-        sinceDecode++;
         totalTicks++;
+    }
+
+    int add(double value, char* output, int outputSize, int& wpm)
+    {
+        push(value);
+        sinceDecode++;
         if (available < WARMUP_TICKS ||
             sinceDecode < DECODE_INTERVAL_TICKS) {
             output[0] = '\0';
@@ -46,6 +52,16 @@ public:
             return 0;
         }
         sinceDecode = 0;
+        return process(output, outputSize, wpm);
+    }
+
+    int process(char* output, int outputSize, int& wpm)
+    {
+        if (available < WARMUP_TICKS) {
+            output[0] = '\0';
+            wpm = lastWpm;
+            return 0;
+        }
         return decode(output, outputSize, wpm, STABILITY_TICKS);
     }
 
@@ -53,6 +69,8 @@ public:
     {
         return decode(output, outputSize, wpm, 0);
     }
+
+    const char* decodedText() const { return lastDecoded; }
 
 private:
     BayesHsmm::Workspace& workspace;
@@ -68,6 +86,7 @@ private:
     char recentCharacters[16];
     long long recentTicks[16];
     int recentCount;
+    char lastDecoded[BayesHsmm::MAX_OUTPUT];
 
     int decode(char* output, int outputSize, int& wpm, int stabilityTicks)
     {
@@ -92,6 +111,8 @@ private:
             intervalsSinceSelection++;
             if (length == 0) modelWpm = 0;
         }
+        std::memcpy(lastDecoded, decoded, length);
+        lastDecoded[length] = '\0';
         lastWpm = wpm;
         int stableEnd = available - stabilityTicks;
         long long windowStart = totalTicks - available;

@@ -95,10 +95,12 @@ static bool readWav(const char* filename, std::vector<int16_t>& samples,
 }
 
 static int makeEnvelope(const std::vector<int16_t>& samples,
-    unsigned int sampleRate, double frequency, double wpm, double* envelope)
+    unsigned int sampleRate, double frequency, double wpm, double* envelope,
+    bool fixedWindow = false)
 {
     int hop = sampleRate / 200;
-    int window = (int) (sampleRate * 0.6 * 1.2 / wpm);
+    int window = fixedWindow ? 256 :
+        (int) (sampleRate * 0.6 * 1.2 / wpm);
     int minimumWindow = (int) (sampleRate * 15 / 1000);
     int maximumWindow = (int) (sampleRate * 30 / 1000);
     window = std::max(minimumWindow, std::min(maximumWindow, window));
@@ -164,7 +166,7 @@ int main(int argc, char** argv)
     double envelope[BayesHsmm::MAX_TICKS];
     double wpm = atof(argv[3]);
     int count = makeEnvelope(samples, sampleRate, atof(argv[2]),
-        wpm > 0.0 ? wpm : 20.0, envelope);
+        wpm > 0.0 ? wpm : 20.0, envelope, stream);
     char output[BayesHsmm::MAX_OUTPUT];
     if (stream) {
         BayesHsmm::Workspace workspace;

@@ -1,335 +1,339 @@
-#include "csdr/ringbuffer.hpp"
-#include "csdr/cw.hpp"
+#pragma once
+
+#include "bayes_stream.hpp"
 #include "fftw3.h"
-#include <stdio.h>
-#include <string.h>
-#include <math.h>
 
-#define showDbg 0 // 1: Show debug information
-
-#define USE_NEIGHBORS  0 // 1: Subtract neighbors from each FFT bucket
-#define USE_AVG_BOTTOM 0 // 1: Subtract average value from each bucket
-#define USE_AVG_RATIO  0 // 1: Divide each bucket by average value
-#define USE_THRESHOLD  1 // 1: Convert each bucket to 0.0/1.0 values
-
-#define MAX_SCALES   (16)
-#define MAX_CHANNELS (128)
-#define MAX_INPUT    (MAX_CHANNELS * 2)
-#define INPUT_STEP   (MAX_INPUT) // MAX_INPUT/4
-#define AVG_SECONDS  (3)
-#define NEIGH_WEIGHT (0.5)
-#define THRES_WEIGHT (6.0)
-#define OUTPUT_BUFFER_SIZE (32)
-
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <functional>
+#include <stdint.h>
+
+#define MAX_CHANNELS 128
+#define MAX_INPUT (MAX_CHANNELS * 2)
+
 typedef std::function<void(int, char, int)> OutputCallback;
 
 typedef enum {
-    PWR_CALC_AVG_RATIO,  // Divide each bucket by average value
-    PWR_CALC_AVG_BOTTOM, // Subtract average value from each bucket
-    PWR_CALC_THRESHOLD,  // Convert each bucket to 0.0/1.0 values
+    PWR_CALC_AVG_RATIO,
+    PWR_CALC_AVG_BOTTOM,
+    PWR_CALC_THRESHOLD,
 } PwrCalc_t;
 
 class CwSkimmer {
 public:
-    CwSkimmer(int sampleRate) : pwr_calc(PWR_CALC_AVG_RATIO), filter_neighbors(false), sampleRate(sampleRate) {
-        // initialize fftw
-        fft = fftwf_plan_dft_r2c_1d(MAX_INPUT, fftIn, fftOut, FFTW_MEASURE);
-
-        // Create and connect CSDR objects, clear output state
-        for (int j = 0; j < MAX_CHANNELS; ++j) {
-            in[j] = new Csdr::Ringbuffer<float>(sampleRate);
-            inReader[j] = new Csdr::RingbufferReader<float>(in[j]);
-            out[j] = new Csdr::Ringbuffer<unsigned char>(OUTPUT_BUFFER_SIZE);
-            outReader[j] = new Csdr::RingbufferReader<unsigned char>(out[j]);
-            cwDecoder[j] = new Csdr::CwDecoder<float>(sampleRate, false);
-            cwDecoder[j]->setReader(inReader[j]);
-            cwDecoder[j]->setWriter(out[j]);
-            outState[j] = ' ';
-        }
-
-        remains = 0;
-        avgPower = 4.0;
+    explicit CwSkimmer(int sampleRate) :
+        sampleRate(sampleRate),
+        hopSize(std::max(1, std::min(MAX_INPUT, sampleRate / 200))),
+        fft(fftwf_plan_dft_r2c_1d(MAX_INPUT, fftIn, fftOut, FFTW_MEASURE))
+    {
+        for (int i = 0; i < MAX_TRACKS; ++i)
+            tracks[i].stream = new BayesCwStream(workspace);
+        reset();
     }
 
-    ~CwSkimmer() {
-        // Release FFTW3 resources
+    ~CwSkimmer()
+    {
         fftwf_destroy_plan(fft);
-
-        // Release CSDR resources
-        for (int j = 0; j < MAX_CHANNELS; ++j) {
-            delete outReader[j];
-            delete out[j];
-            delete cwDecoder[j];
-            delete inReader[j];
-            delete in[j];
-        }
+        for (int i = 0; i < MAX_TRACKS; ++i)
+            delete tracks[i].stream;
     }
 
-    void reset() {
-        // Final printout
-        for (int i = 0; i < MAX_CHANNELS; i++) {
-            cwDecoder[i]->reset();
-            outState[i] = ' ';
-        }
+    void reset()
+    {
         remains = 0;
-        avgPower = 4.0;
-    }
-
-    void SetParams(PwrCalc_t pwr_calc, bool filter_neighbors) {
-        this->pwr_calc = pwr_calc;
-        this->filter_neighbors = filter_neighbors;
-    }
-
-    void SetCallback(OutputCallback callback) {
-        this->callback = callback;
-    }
-
-    void AddSamples(float* sample, size_t count) {
-        while (count > 0) {
-            if (count >= MAX_INPUT - remains) {
-                // more samples than we can fit in the buffer
-                memcpy(dataBuf + remains, sample, (MAX_INPUT - remains) * sizeof(float));
-                count -= MAX_INPUT - remains;
-                sample += MAX_INPUT - remains;
-                process();
-                remains = 0;
-            }
-            else {
-                // we can fit the samples in the buffer
-                memcpy(dataBuf + remains, sample, count * sizeof(float));
-
-                remains += count;
-                count = 0;
-            }
+        tickCount = 0;
+        historyWritePosition = 0;
+        historyAvailable = 0;
+        std::memset(activity, 0, sizeof(activity));
+        for (int i = 0; i < MAX_TRACKS; ++i) {
+            tracks[i].active = false;
+            tracks[i].bin = 0;
+            tracks[i].strength = 0.0f;
+            tracks[i].missedSelections = 0;
+            tracks[i].wpm = 0;
+            tracks[i].stream->reset();
         }
     }
 
-    void AddSamples(int16_t* sample, size_t count) {
-        while (count > 0) {
-            if (count >= MAX_INPUT - remains) {
-                // same or more samples than we can fit in the buffer
-                for (size_t i = 0; i < MAX_INPUT - remains; i++) {
-                    dataBuf[remains + i] = (float)sample[i] / 32768.0;
-                }
-                count -= MAX_INPUT - remains;
-                sample += MAX_INPUT - remains;
-                process();
-                remains = 0;
-            }
-            else {
-                // we can fit the samples in the buffer
-                for (size_t i = 0; i < count; i++) {
-                    dataBuf[remains + i] = sample[i] / 32768.0;
-                }
+    void SetParams(PwrCalc_t, bool) {}
 
-                remains += count;
-                count = 0;
-            }
+    void SetCallback(OutputCallback outputCallback)
+    {
+        callback = outputCallback;
+    }
+
+    void AddSamples(float* samples, size_t count)
+    {
+        while (count != 0) {
+            size_t copy = std::min(count, MAX_INPUT - remains);
+            std::memcpy(dataBuf + remains, samples, copy * sizeof(dataBuf[0]));
+            remains += copy;
+            samples += copy;
+            count -= copy;
+            if (remains == MAX_INPUT) advance();
+        }
+    }
+
+    void AddSamples(int16_t* samples, size_t count)
+    {
+        while (count != 0) {
+            size_t copy = std::min(count, MAX_INPUT - remains);
+            for (size_t i = 0; i < copy; ++i)
+                dataBuf[remains + i] = samples[i] / 32768.0f;
+            remains += copy;
+            samples += copy;
+            count -= copy;
+            if (remains == MAX_INPUT) advance();
         }
     }
 
 private:
-    float avgPower;
-    size_t remains;
+    enum {
+        MAX_TRACKS = 16,
+        TRACK_SELECTION_TICKS = 200,
+        TRACK_HOLD_SELECTIONS = 5,
+        CANDIDATE_NMS_BINS = 1,
+        OUTPUT_NMS_BINS = 4
+    };
 
-    PwrCalc_t pwr_calc;
-    bool filter_neighbors;
+    struct Track {
+        bool active;
+        int bin;
+        float strength;
+        int missedSelections;
+        int wpm;
+        BayesCwStream* stream;
+    };
+
+    struct Candidate {
+        int bin;
+        float strength;
+    };
+
     unsigned int sampleRate;
+    int hopSize;
+    size_t remains;
+    int tickCount;
 
-    fftwf_complex fftOut[MAX_INPUT];
     float dataBuf[MAX_INPUT];
     float fftIn[MAX_INPUT];
+    fftwf_complex fftOut[MAX_INPUT];
     fftwf_plan fft;
+    float activity[MAX_CHANNELS];
+    float history[MAX_CHANNELS][BayesCwStream::WINDOW_TICKS];
+    int historyWritePosition;
+    int historyAvailable;
 
-    Csdr::Ringbuffer<float>* in[MAX_CHANNELS];
-    Csdr::RingbufferReader<float>* inReader[MAX_CHANNELS];
-    Csdr::Ringbuffer<unsigned char>* out[MAX_CHANNELS];
-    Csdr::RingbufferReader<unsigned char>* outReader[MAX_CHANNELS];
-    Csdr::CwDecoder<float>* cwDecoder[MAX_CHANNELS];
-    unsigned int outState[MAX_CHANNELS];
-
+    BayesHsmm::Workspace workspace;
+    Track tracks[MAX_TRACKS];
     OutputCallback callback;
 
-    // Hamming window function
-    float hamming(unsigned int x, unsigned int size) {
-        return (0.54 - 0.46 * cosf((2.0 * M_PI * x) / (size - 1)));
+    void advance()
+    {
+        process();
+        int retained = MAX_INPUT - hopSize;
+        if (retained != 0)
+            std::memmove(dataBuf, dataBuf + hopSize,
+                retained * sizeof(dataBuf[0]));
+        remains = retained;
     }
 
-    // when there is enough samples
-    void process() {
-        // Debug output gets accumulated here
-        char dbgOut[MAX_CHANNELS + 16];
-
-        float maxPower, accPower;
-        int j, i, k, n;
-
-        // Apply Hamming window
-        double hk = 2.0 * M_PI / (MAX_INPUT - 1);
-        for (j = 0; j < MAX_INPUT; ++j)
-            fftIn[j] = dataBuf[j] * (0.54 - 0.46 * cos(j * hk));
-
-        // Shift input data
-        // remains = MAX_INPUT-INPUT_STEP;
-        // memcpy(dataBuf, dataBuf+INPUT_STEP, remains*sizeof(float));
-
-        // Compute FFT
+    void process()
+    {
+        double windowScale = 2.0 * M_PI / (MAX_INPUT - 1);
+        for (int i = 0; i < MAX_INPUT; ++i)
+            fftIn[i] = dataBuf[i] *
+                (0.54f - 0.46f * std::cos(i * windowScale));
         fftwf_execute(fft);
 
-        // Go to magnitudes
-        for (j = 0; j < MAX_INPUT / 2; ++j)
-            fftOut[j][0] = fftOut[j][1] = sqrt(fftOut[j][0] * fftOut[j][0] + fftOut[j][1] * fftOut[j][1]);
+        float magnitude[MAX_CHANNELS];
+        for (int i = 0; i < MAX_CHANNELS; ++i)
+            magnitude[i] = std::sqrt(
+                fftOut[i][0] * fftOut[i][0] +
+                fftOut[i][1] * fftOut[i][1]);
 
-        // Filter out spurs
-        if (filter_neighbors) {
-            fftOut[MAX_INPUT / 2 - 1][0] = fmax(0.0, fftOut[MAX_INPUT / 2 - 1][1] - NEIGH_WEIGHT * fftOut[MAX_INPUT / 2 - 2][1]);
-            fftOut[0][0] = fmax(0.0, fftOut[0][1] - NEIGH_WEIGHT * fftOut[1][1]);
-            for (j = 1; j < MAX_INPUT / 2 - 1; ++j)
-                fftOut[j][0] = fmax(0.0, fftOut[j][1] - 0.5 * NEIGH_WEIGHT * (fftOut[j - 1][1] + fftOut[j + 1][1]));
+        float contrast[MAX_CHANNELS];
+        double tickSeconds = hopSize / (double) sampleRate;
+        float activityAlpha =
+            (float) (tickSeconds / 0.5 < 1.0 ? tickSeconds / 0.5 : 1.0);
+        for (int i = 0; i < MAX_CHANNELS; ++i) {
+            int lower = std::max(0, i - 2);
+            int upper = std::min(MAX_CHANNELS - 1, i + 2);
+            float flank = 0.5f * (magnitude[lower] + magnitude[upper]);
+            contrast[i] = std::max(0.0f, magnitude[i] - flank);
+            activity[i] += activityAlpha * (contrast[i] - activity[i]);
+            history[i][historyWritePosition] = contrast[i];
         }
+        historyWritePosition =
+            (historyWritePosition + 1) % BayesCwStream::WINDOW_TICKS;
+        if (historyAvailable < BayesCwStream::WINDOW_TICKS)
+            historyAvailable++;
 
-        struct
-        {
-            float power;
-            int count;
-        } scales[MAX_SCALES];
+        for (int i = 0; i < MAX_TRACKS; ++i)
+            if (tracks[i].active)
+                tracks[i].stream->push(contrast[tracks[i].bin]);
 
-        // Sort buckets into scales.
-        memset(scales, 0, sizeof(scales));
-        for (j = 0, maxPower = 0.0; j < MAX_INPUT / 2; ++j) {
-            float v = fftOut[j][0];
-            int scale = floor(log(v));
-            scale = scale < 0 ? 0 : scale + 1 >= MAX_SCALES ? MAX_SCALES - 1
-                                                            : scale + 1;
-            maxPower = fmax(maxPower, v);
-            scales[scale].power += v;
-            scales[scale].count++;
+        tickCount++;
+        if (tickCount % TRACK_SELECTION_TICKS == 0) {
+            selectTracks();
+            decodeTracks();
         }
-
-        // Find most populated scales and use them for ground power.
-        for (i = 0, n = 0, accPower = 0.0; i < MAX_SCALES - 1; ++i) {
-            // Look for the next most populated scale.
-            for (k = i, j = i + 1; j < MAX_SCALES; ++j)
-                if (scales[j].count > scales[k].count)
-                    k = j;
-            // If found, swap with current one.
-            if (k != i) {
-                float v = scales[k].power;
-                j = scales[k].count;
-                scales[k] = scales[i];
-                scales[i].power = v;
-                scales[i].count = j;
-            }
-            // Keep track of the total number of buckets.
-            accPower += scales[i].power;
-            n += scales[i].count;
-            // Stop when we collect 1/2 of all buckets.
-            if (n >= MAX_INPUT / 2 / 2)
-                break;
-        }
-
-        // Maintain rolling average over AVG_SECONDS.
-        accPower /= n;
-        avgPower += (accPower - avgPower) * INPUT_STEP / sampleRate / AVG_SECONDS;
-
-        // Decode by channel
-        for (j = i = k = n = 0, accPower = 0.0; j < MAX_INPUT / 2; ++j, ++n) {
-            float power = fftOut[j][0];
-
-            // If accumulated enough FFT buckets for a channel...
-            if (k >= MAX_INPUT / 2) {
-                switch(pwr_calc) {
-                case PWR_CALC_AVG_RATIO:
-                    // Divide channel signal by the average power.
-                    accPower = fmaxf(1.0, accPower / fmaxf(avgPower, 0.000001));
-                    break;
-                case PWR_CALC_AVG_BOTTOM:
-                    // Subtract average power from the channel signal.
-                    accPower = fmaxf(0.0, accPower - avgPower);
-                    break;
-                case PWR_CALC_THRESHOLD:
-                    // Convert channel signal to 1/0 values based on threshold.
-                    accPower = accPower >= avgPower * THRES_WEIGHT ? 1.0f : 0.0f;
-                    break;
-                }
-
-                dbgOut[i] = accPower < 0.5 ? '.' : '0' + round(fmax(fmin(accPower / maxPower * 10.0, 9.0), 0.0));
-
-                if (in[i]->writeable() >= INPUT_STEP) {
-                    // Fill input buffer with computed signal power
-                    float* dst = in[i]->getWritePointer();
-                    for (int j = 0; j < INPUT_STEP; ++j)
-                        dst[j] = accPower;
-                    in[i]->advance(INPUT_STEP);
-
-                    // Process input for the current channel
-                    while (cwDecoder[i]->canProcess())
-                        cwDecoder[i]->process();
-
-                    // Print output
-                    printOutput(i, i * sampleRate / 2 / MAX_CHANNELS);
-                }
-
-                // Start on a new channel
-                accPower = 0.0;
-                k -= MAX_INPUT / 2;
-                i += 1;
-                n = 0;
-            }
-
-            // Maximize channel signal power
-            accPower = fmax(accPower, power);
-            k += MAX_CHANNELS;
-        }
-
-        // Print debug information to the stderr
-        dbgOut[i] = '\0';
-        if (showDbg)
-            fprintf(stderr, "%s (%.2f, %.2f)\n", dbgOut, avgPower, maxPower);
     }
 
-    // Print output from ith decoder
-    void
-    printOutput(int i, unsigned int freq) {
-        size_t n = outReader[i]->available();
-        if (n == 0) return;
-        int wpm = cwDecoder[i]->getWPM();
-
-        // Print characters
-        unsigned char* p = outReader[i]->getReadPointer();
-        for (size_t j = 0; j < n; ++j) {
-            switch (outState[i] & 0xFF) {
-            case '\0':
-                // Print character
-                callback(freq, p[j], wpm);
-                // Once we encounter a space, wait for stray characters
-                if (p[j] == ' ') outState[i] = p[j];
-                break;
-            case ' ':
-                // If possible error, save it in state, else print and reset state
-                if (strchr("TEI ", p[j]))
-                    outState[i] = p[j];
-                else {
-                    callback(freq, p[j], wpm);
-                    outState[i] = '\0';
-                }
-                break;
-            default:
-                // If likely error, skip it, else print and reset state
-                if (strchr("TEI ", p[j]))
-                    outState[i] = (outState[i] << 8) | p[j];
-                else {
-                    for (int k = 24; k >= 0; k -= 8)
-                        if ((outState[i] >> k) & 0xFF)
-                            callback(freq, (outState[i] >> k) & 0xFF, wpm);
-                    callback(freq, p[j], wpm);
-                    outState[i] = '\0';
-                }
-                break;
+    void selectTracks()
+    {
+        Candidate candidates[MAX_CHANNELS];
+        int candidateCount = 0;
+        for (int bin = 1; bin < MAX_CHANNELS - 1; ++bin) {
+            if (activity[bin] < activity[bin - 1] ||
+                activity[bin] < activity[bin + 1])
+                continue;
+            Candidate candidate = { bin, activity[bin] };
+            int position = candidateCount;
+            while (position > 0 &&
+                candidates[position - 1].strength < candidate.strength) {
+                candidates[position] = candidates[position - 1];
+                position--;
             }
+            candidates[position] = candidate;
+            candidateCount++;
         }
 
-        // Done printing
-        outReader[i]->advance(n);
+        bool seen[MAX_TRACKS] = {};
+        int acceptedBins[MAX_TRACKS];
+        int acceptedCount = 0;
+        for (int i = 0; i < candidateCount && acceptedCount < MAX_TRACKS; ++i) {
+            bool adjacent = false;
+            for (int j = 0; j < acceptedCount; ++j)
+                adjacent |= std::abs(candidates[i].bin - acceptedBins[j]) <=
+                    CANDIDATE_NMS_BINS;
+            if (adjacent) continue;
+
+            int track = findTrack(candidates[i].bin);
+            if (track < 0) track = findAvailableTrack(seen);
+            if (track < 0) continue;
+            if (!tracks[track].active ||
+                tracks[track].bin != candidates[i].bin) {
+                tracks[track].active = true;
+                tracks[track].bin = candidates[i].bin;
+                preloadTrack(track);
+            }
+            tracks[track].strength = candidates[i].strength;
+            tracks[track].missedSelections = 0;
+            seen[track] = true;
+            acceptedBins[acceptedCount++] = candidates[i].bin;
+        }
+
+        for (int i = 0; i < MAX_TRACKS; ++i) {
+            if (!tracks[i].active || seen[i]) continue;
+            tracks[i].missedSelections++;
+            if (tracks[i].missedSelections >= TRACK_HOLD_SELECTIONS) {
+                tracks[i].active = false;
+                tracks[i].stream->reset();
+            }
+        }
+    }
+
+    int findTrack(int bin) const
+    {
+        for (int i = 0; i < MAX_TRACKS; ++i)
+            if (tracks[i].active &&
+                std::abs(tracks[i].bin - bin) <= CANDIDATE_NMS_BINS)
+                return i;
+        return -1;
+    }
+
+    int findAvailableTrack(const bool* seen) const
+    {
+        for (int i = 0; i < MAX_TRACKS; ++i)
+            if (!tracks[i].active) return i;
+        int weakest = -1;
+        for (int i = 0; i < MAX_TRACKS; ++i)
+            if (!seen[i] &&
+                (weakest < 0 || tracks[i].strength < tracks[weakest].strength))
+                weakest = i;
+        return weakest;
+    }
+
+    void preloadTrack(int track)
+    {
+        tracks[track].stream->reset();
+        int start = historyAvailable == BayesCwStream::WINDOW_TICKS ?
+            historyWritePosition : 0;
+        for (int i = 0; i < historyAvailable; ++i)
+            tracks[track].stream->push(
+                history[tracks[track].bin]
+                    [(start + i) % BayesCwStream::WINDOW_TICKS]);
+    }
+
+    void decodeTracks()
+    {
+        char pending[MAX_TRACKS][BayesHsmm::MAX_OUTPUT];
+        int pendingLength[MAX_TRACKS] = {};
+        for (int i = 0; i < MAX_TRACKS; ++i) {
+            if (!tracks[i].active) continue;
+            pendingLength[i] = tracks[i].stream->process(pending[i],
+                sizeof(pending[i]), tracks[i].wpm);
+        }
+
+        for (int i = 0; i < MAX_TRACKS; ++i) {
+            if (!tracks[i].active || pendingLength[i] == 0) continue;
+            bool suppressed = false;
+            for (int j = 0; j < MAX_TRACKS; ++j) {
+                if (i == j || !tracks[j].active ||
+                    pendingLength[j] == 0 ||
+                    tracks[j].strength <= tracks[i].strength ||
+                    std::abs(tracks[j].bin - tracks[i].bin) > OUTPUT_NMS_BINS)
+                    continue;
+                if (similar(tracks[i].stream->decodedText(),
+                        tracks[j].stream->decodedText())) {
+                    suppressed = true;
+                    break;
+                }
+            }
+            if (suppressed || !callback) continue;
+            int frequency = (int) std::floor(
+                tracks[i].bin * sampleRate / (double) MAX_INPUT + 0.5);
+            for (int j = 0; j < pendingLength[i]; ++j)
+                callback(frequency, pending[i][j], tracks[i].wpm);
+        }
+    }
+
+    static bool similar(const char* left, const char* right)
+    {
+        char a[BayesHsmm::MAX_OUTPUT];
+        char b[BayesHsmm::MAX_OUTPUT];
+        int aLength = normalize(left, a);
+        int bLength = normalize(right, b);
+        int maximum = std::max(aLength, bLength);
+        if (maximum < 4) return false;
+
+        int previous[BayesHsmm::MAX_OUTPUT];
+        int current[BayesHsmm::MAX_OUTPUT];
+        for (int j = 0; j <= bLength; ++j) previous[j] = j;
+        for (int i = 1; i <= aLength; ++i) {
+            current[0] = i;
+            for (int j = 1; j <= bLength; ++j)
+                current[j] = std::min(
+                    std::min(previous[j] + 1, current[j - 1] + 1),
+                    previous[j - 1] + (a[i - 1] != b[j - 1]));
+            std::memcpy(previous, current,
+                (bLength + 1) * sizeof(previous[0]));
+        }
+        return previous[bLength] * 3 <= maximum;
+    }
+
+    static int normalize(const char* input, char* output)
+    {
+        int written = 0;
+        while (*input && written + 1 < BayesHsmm::MAX_OUTPUT) {
+            char value = *input++;
+            if ((value >= 'A' && value <= 'Z') ||
+                (value >= '0' && value <= '9'))
+                output[written++] = value;
+        }
+        output[written] = '\0';
+        return written;
     }
 };
