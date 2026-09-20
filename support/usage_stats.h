@@ -17,5 +17,6 @@ bool usage_stats_delete_all();
 char* usage_stats_heatmap_json(int days, const char* metric);
 char* usage_stats_summary_json();
 char* usage_stats_day_json(const char* date);
+char* usage_stats_hour_json(const char* date, int hour);
 char* usage_stats_recent_json(const char* date, int page, int limit);
 const char* usage_stats_last_error();

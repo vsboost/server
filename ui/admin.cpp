@@ -393,6 +393,17 @@ void c2s_admin(void* param) {
             }
             kiwi_asfree(usage_date);
 
+            int usage_hour;
+            i = sscanf(cmd, "SET usage_hour date=%16ms hour=%d", &usage_date, &usage_hour);
+            if (i == 2) {
+                char* json = usage_stats_hour_json(usage_date, usage_hour);
+                send_msg_encoded(conn, "ADM", "usage_hour", "%s", json);
+                free(json);
+                kiwi_asfree(usage_date);
+                continue;
+            }
+            kiwi_asfree(usage_date);
+
             int usage_page, usage_limit;
             i = sscanf(cmd, "SET usage_recent date=%16ms page=%d limit=%d",
                        &usage_date, &usage_page, &usage_limit);

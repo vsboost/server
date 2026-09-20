@@ -1086,6 +1086,70 @@ char* usage_stats_day_json(const char* date)
     return strdup(out.c_str());
 }
 
+char* usage_stats_hour_json(const char* date, int hour)
+{
+    if (!valid_date(date) || hour < 0 || hour > 23)
+        return strdup("{\"error\":\"invalid hour\"}");
+
+    struct tm tm;
+    memset(&tm, 0, sizeof(tm));
+    int year, month, day;
+    sscanf(date, "%d-%d-%d", &year, &month, &day);
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    s64_t epoch = timegm(&tm);
+
+    if (epoch != current_hour.hour_start) {
+        char path[256];
+        snprintf(path, sizeof(path), "%s/hourly/%s/%02d.json", usage_root(), date, hour);
+        char* json = read_file_alloc(path);
+        return json ? json : strdup("{\"available\":false}");
+    }
+
+    std::string out;
+    appendf(out, "{\"schema\":%d,\"complete\":false,\"hour_start\":%lld,"
+                 "\"listener_seconds\":%llu,\"sessions\":%u,\"unique_estimate\":%u,"
+                 "\"peak_concurrent\":%u,\"concurrency_sum\":%llu,\"concurrency_samples\":%llu,"
+                 "\"detail_dropped\":%u,\"frequency_overflow\":%u,\"geography_overflow\":%u,"
+                 "\"frequencies\":[",
+            USAGE_SCHEMA, current_hour.hour_start, current_hour.listener_seconds,
+            current_hour.session_starts, hll_estimate(&current_hour.unique),
+            current_hour.peak_concurrent, current_hour.concurrency_sum,
+            current_hour.concurrency_samples, current_hour.detail_dropped,
+            current_hour.frequency_overflow, current_hour.geography_overflow);
+    bool comma = false;
+    for (int i = 0; i < FREQ_CAP; i++) {
+        frequency_t* f = &current_hour.freq[i];
+        if (!f->used) continue;
+        appendf(out, "%s{\"khz\":%d,\"mode\":\"%s\",\"seconds\":%llu,\"entries\":%u,\"error\":%llu}",
+                comma ? "," : "", f->bucket_kHz,
+                json_escape(rx_enum2mode(f->mode)).c_str(), f->seconds, f->entries, f->error);
+        comma = true;
+    }
+    out += "],\"extensions\":[";
+    comma = false;
+    for (int i = 0; i < EXT_CAP; i++) {
+        extension_t* ext = &current_hour.ext[i];
+        if (!ext->used) continue;
+        appendf(out, "%s{\"name\":\"%s\",\"seconds\":%llu,\"starts\":%u}",
+                comma ? "," : "", json_escape(ext->name).c_str(), ext->seconds, ext->starts);
+        comma = true;
+    }
+    out += "],\"geography\":[";
+    comma = false;
+    for (int i = 0; i < GEO_CAP; i++) {
+        geography_t* geo = &current_hour.geo[i];
+        if (!geo->used) continue;
+        appendf(out, "%s{\"label\":\"%s\",\"seconds\":%llu,\"sessions\":%u}",
+                comma ? "," : "", json_escape(geo->label).c_str(), geo->seconds, geo->sessions);
+        comma = true;
+    }
+    out += "]}";
+    return strdup(out.c_str());
+}
+
 char* usage_stats_recent_json(const char* date, int page, int limit)
 {
     if (!valid_date(date)) return strdup("{\"error\":\"invalid date\"}");
