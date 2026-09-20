@@ -160,10 +160,36 @@ int main(int argc, char** argv)
 
     double envelope[BayesHsmm::MAX_TICKS];
     double wpm = atof(argv[3]);
-    int count = makeEnvelope(samples, sampleRate, atof(argv[2]), wpm, envelope);
-    BayesHsmm decoder(wpm, argc >= 6 ? atof(argv[5]) : 0.0);
     char output[BayesHsmm::MAX_OUTPUT];
-    decoder.decode(envelope, count, output, sizeof(output));
+    if (wpm > 0.0) {
+        int count = makeEnvelope(samples, sampleRate, atof(argv[2]), wpm, envelope);
+        BayesHsmm decoder(wpm, argc >= 6 ? atof(argv[5]) : 0.0);
+        decoder.decode(envelope, count, output, sizeof(output));
+    } else {
+        static const int speeds[] = { 10, 12, 15, 18, 20, 24, 28, 32, 36, 40 };
+        double bestQuality = -1e30;
+        int bestSpeed = 0;
+        int bestEstimatedSpeed = 0;
+        output[0] = '\0';
+        for (unsigned int i = 0; i < sizeof(speeds) / sizeof(speeds[0]); ++i) {
+            int count = makeEnvelope(samples, sampleRate, atof(argv[2]),
+                speeds[i], envelope);
+            BayesHsmm decoder(speeds[i], argc >= 6 ? atof(argv[5]) : 0.0);
+            BayesHsmm::Metrics metrics;
+            char candidate[BayesHsmm::MAX_OUTPUT];
+            decoder.decode(envelope, count, candidate, sizeof(candidate), &metrics);
+            double quality = metrics.modelGain -
+                0.05 * metrics.unknownCharacters;
+            if (quality > bestQuality) {
+                bestQuality = quality;
+                bestSpeed = speeds[i];
+                bestEstimatedSpeed = metrics.estimatedWpm;
+                strcpy(output, candidate);
+            }
+        }
+        fprintf(stderr, "selected WPM %d estimated %d quality %.3f\n",
+            bestSpeed, bestEstimatedSpeed, bestQuality);
+    }
     printf("%s\n", output);
     return strcmp(argv[4], "-") != 0 && strstr(output, argv[4]) == NULL;
 }

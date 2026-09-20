@@ -13,18 +13,54 @@ public:
         MAX_OUTPUT = 128
     };
 
+    struct Segment {
+        int state;
+        int duration;
+        double evidence;
+    };
+
+    struct Workspace {
+        double ordered[MAX_TICKS];
+        double prefix[2][MAX_TICKS + 1];
+        double score[2][MAX_TICKS];
+        short previousEnd[2][MAX_TICKS];
+        unsigned short selectedDuration[2][MAX_TICKS];
+        Segment segments[MAX_SEGMENTS];
+    };
+
+    struct Metrics {
+        double modelGain;
+        int characters;
+        int unknownCharacters;
+        int estimatedWpm;
+    };
+
     explicit BayesHsmm(double wpm, double minimumConfidence = 0.0) :
         ditTicks(1200.0 / (wpm < 15.0 ? 15.0 : wpm) / TICK_MS),
         spacingScale(wpm < 15.0 ? (50.0 * 15.0 / wpm - 31.0) / 19.0 : 1.0),
         minimumConfidence(minimumConfidence)
     {}
 
-    int decode(const double* envelope, int count, char* output, int outputSize) const
+    int decode(const double* envelope, int count, char* output, int outputSize,
+        Metrics* metrics = NULL) const
     {
+        Workspace workspace;
+        return decode(envelope, count, output, outputSize, workspace, metrics);
+    }
+
+    int decode(const double* envelope, int count, char* output, int outputSize,
+        Workspace& workspace, Metrics* metrics = NULL) const
+    {
+        if (metrics) {
+            metrics->modelGain = 0.0;
+            metrics->characters = 0;
+            metrics->unknownCharacters = 0;
+            metrics->estimatedWpm = 0;
+        }
         if (!envelope || count < 2 || count > MAX_TICKS || !output || outputSize < 2)
             return 0;
 
-        double ordered[MAX_TICKS];
+        double* ordered = workspace.ordered;
         std::memcpy(ordered, envelope, count * sizeof(ordered[0]));
         std::sort(ordered, ordered + count);
         int noiseCount = std::max(2, count * 3 / 10);
@@ -58,7 +94,7 @@ public:
         }
         int activeCount = last - first + 1;
 
-        double prefix[2][MAX_TICKS + 1];
+        double (*prefix)[MAX_TICKS + 1] = workspace.prefix;
         prefix[0][0] = prefix[1][0] = 0.0;
         for (int i = 0; i < activeCount; ++i) {
             double value = envelope[first + i];
@@ -69,9 +105,10 @@ public:
         }
 
         const double invalid = -1e30;
-        double score[2][MAX_TICKS];
-        short previousEnd[2][MAX_TICKS];
-        unsigned short selectedDuration[2][MAX_TICKS];
+        double (*score)[MAX_TICKS] = workspace.score;
+        short (*previousEnd)[MAX_TICKS] = workspace.previousEnd;
+        unsigned short (*selectedDuration)[MAX_TICKS] =
+            workspace.selectedDuration;
         int minimumDuration = std::max(1, (int) (0.35 * ditTicks));
 
         for (int end = 0; end < activeCount; ++end) {
@@ -109,12 +146,14 @@ public:
             nullScore += logLikelihood(envelope[first + i], nullMean, nullVariance);
         double pathScore = maximum(score[0][activeCount - 1],
             score[1][activeCount - 1]);
-        if ((pathScore - nullScore) / activeCount < 0.3) {
+        double modelGain = (pathScore - nullScore) / activeCount;
+        if (metrics) metrics->modelGain = modelGain;
+        if (modelGain < 0.3) {
             output[0] = '\0';
             return 0;
         }
 
-        Segment segments[MAX_SEGMENTS];
+        Segment* segments = workspace.segments;
         int segmentCount = 0;
         int state = score[0][activeCount - 1] > score[1][activeCount - 1] ? 0 : 1;
         int end = activeCount - 1;
@@ -134,12 +173,16 @@ public:
         double characterEvidence = 0.0;
         int characterTicks = 0;
         int written = 0;
+        double estimatedDitTicks = 0.0;
+        int estimatedDitCount = 0;
         for (int i = segmentCount - 1; i >= 0; --i) {
             double units = segments[i].duration / ditTicks;
             if (segments[i].state) {
+                bool isDot = std::fabs(units - 1.0) < std::fabs(units - 3.0);
                 if (symbolCount < (int) sizeof(symbols) - 1)
-                    symbols[symbolCount++] =
-                        std::fabs(units - 1.0) < std::fabs(units - 3.0) ? '.' : '-';
+                    symbols[symbolCount++] = isDot ? '.' : '-';
+                estimatedDitTicks += segments[i].duration / (isDot ? 1.0 : 3.0);
+                estimatedDitCount++;
                 characterEvidence += segments[i].evidence;
                 characterTicks += segments[i].duration;
             } else if (units >= 2.2 && symbolCount != 0) {
@@ -163,16 +206,47 @@ public:
                 append(output, outputSize, written, lookup(symbols));
         }
         output[written] = '\0';
+        if (metrics) {
+            metrics->characters = written;
+            for (int i = 0; i < written; ++i)
+                if (output[i] == '?') metrics->unknownCharacters++;
+            if (estimatedDitCount != 0)
+                metrics->estimatedWpm = (int) std::floor(
+                    1200.0 / (estimatedDitTicks / estimatedDitCount * TICK_MS) +
+                    0.5);
+        }
         return written;
     }
 
-private:
-    struct Segment {
-        int state;
-        int duration;
-        double evidence;
-    };
+    static int decodeBest(const double* envelope, int count, char* output,
+        int outputSize, Workspace& workspace, int& wpm,
+        double minimumConfidence = 4.0)
+    {
+        static const int speeds[] = { 10, 12, 15, 18, 20, 24, 28, 32, 36, 40 };
+        double bestQuality = -1e30;
+        int bestLength = 0;
+        wpm = 0;
+        output[0] = '\0';
+        for (unsigned int i = 0; i < sizeof(speeds) / sizeof(speeds[0]); ++i) {
+            BayesHsmm decoder(speeds[i], minimumConfidence);
+            Metrics metrics;
+            char candidate[MAX_OUTPUT];
+            int length = decoder.decode(envelope, count, candidate,
+                sizeof(candidate), workspace, &metrics);
+            double quality = metrics.modelGain -
+                0.05 * metrics.unknownCharacters - (length == 0 ? 1.0 : 0.0);
+            if (quality > bestQuality) {
+                bestQuality = quality;
+                bestLength = std::min(length, outputSize - 1);
+                std::memcpy(output, candidate, bestLength);
+                output[bestLength] = '\0';
+                wpm = metrics.estimatedWpm ? metrics.estimatedWpm : speeds[i];
+            }
+        }
+        return bestLength;
+    }
 
+private:
     double ditTicks;
     double spacingScale;
     double minimumConfidence;
