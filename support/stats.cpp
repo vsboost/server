@@ -34,6 +34,7 @@ Boston, MA  02110-1301, USA.
 #include "eeprom.h"
 #include "shmem.h"
 #include "mqttpub.h"
+#include "usage_stats.h"
 
 #include <stdio.h>
 #include <unistd.h>
@@ -454,6 +455,7 @@ void stat_task(void* param) {
 
     while (TRUE) {
         called_every_second();
+        usage_stats_tick();
 
         if ((secs % STATS_INTERVAL_SECS) == 0) {
             webserver_collect_print_stats(print_stats & STATS_TASK);

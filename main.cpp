@@ -37,6 +37,7 @@ Boston, MA  02110-1301, USA.
 #include "shmem.h" // shmem_init()
 #include "debug.h"
 #include "mqttpub.h"
+#include "usage_stats.h"
 
 #include "version.h"
 
@@ -307,6 +308,7 @@ int main(int argc, char* argv[]) {
     mqtt_init();
 
     rx_server_init();
+    usage_stats_init();
 
     extint_setup();
 

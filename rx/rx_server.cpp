@@ -29,6 +29,7 @@ Boston, MA  02110-1301, USA.
 #include "str.h"
 #include "printf.h"
 #include "timer.h"
+#include "usage_stats.h"
 #include "web.h"
 #include "gps_.h"
 #include "peri.h"
@@ -184,6 +185,7 @@ void rx_server_remove(conn_t* c) {
     c->stop_data = TRUE;
     c->mc = NULL;
 
+    usage_stats_connection_closed(c);
     if (c->isMaster && c->arrived) rx_loguser(c, LOG_LEAVING);
     webserver_connection_cleanup(c);
     kiwi_free("ident_user", c->ident_user);
