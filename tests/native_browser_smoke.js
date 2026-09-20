@@ -1701,9 +1701,35 @@ function fetchRawResponse(headers, path) {
             await new Promise(resolve => setTimeout(resolve, 150));
             const page = document.querySelector('.ui-admin-usage');
             const rect = page.getBoundingClientRect();
+            const luminance = color => {
+                const rgb = color.match(/[\d.]+/g).slice(0, 3).map(value => {
+                    const channel = Number(value) / 255;
+                    return channel <= 0.03928 ? channel / 12.92 :
+                        Math.pow((channel + 0.055) / 1.055, 2.4);
+                });
+                return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+            };
+            const contrast = (first, second) => {
+                const values = [luminance(first), luminance(second)].sort((a, b) => b - a);
+                return (values[0] + 0.05) / (values[1] + 0.05);
+            };
+            const cardContrast = ['midnight', 'ember'].map(theme => {
+                modern_ui_set_theme(theme, false);
+                const card = page.querySelector('.ui-usage-summary-card');
+                const label = card.querySelector('span');
+                const cardStyle = getComputedStyle(card);
+                const labelStyle = getComputedStyle(label);
+                return {
+                    theme,
+                    value: Number(contrast(cardStyle.color, cardStyle.backgroundColor).toFixed(2)),
+                    label: Number(contrast(labelStyle.color, cardStyle.backgroundColor).toFixed(2))
+                };
+            });
+            modern_ui_set_theme('midnight', false);
             return {
                 heading: page.querySelector('.ui-admin-page-header h2')?.textContent,
                 summaryCards: page.querySelectorAll('.ui-usage-summary-card').length,
+                cardContrast,
                 monthBars: page.querySelectorAll('#id-usage-month .ui-usage-bar-row').length,
                 heatmapCells: cells.length,
                 heatmapRows: page.querySelectorAll('.ui-usage-heatmap-row').length,
@@ -2597,6 +2623,7 @@ function fetchRawResponse(headers, path) {
             throw new Error(`invalid modern admin status page: ${JSON.stringify(adminStatus)}`);
         if (adminUsage.heading !== 'Usage' ||
             adminUsage.summaryCards !== 8 ||
+            adminUsage.cardContrast.some(theme => theme.value < 4.5 || theme.label < 4.5) ||
             adminUsage.monthBars < 1 ||
             adminUsage.heatmapCells !== 168 ||
             adminUsage.heatmapRows !== 7 ||

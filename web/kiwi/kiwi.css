@@ -659,7 +659,8 @@ input.kiwi-pw
    padding: 14px;
    border: 1px solid var(--ui-border, #c9d1d9);
    border-radius: 8px;
-   background: var(--ui-panel, rgba(255,255,255,.65));
+   background: var(--ui-surface-2, #fff);
+   color: var(--ui-text, #111);
 }
 
 .ui-usage-summary-card span,
@@ -669,7 +670,7 @@ input.kiwi-pw
 
 .ui-usage-summary-card span {
    font-size: 12px;
-   opacity: .72;
+   color: var(--ui-text-soft, #444);
 }
 
 .ui-usage-summary-card strong {
