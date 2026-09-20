@@ -1681,6 +1681,50 @@ function fetchRawResponse(headers, path) {
                 }
             };
         });
+        await clickAdminNav('id-nav-usage');
+        await adminPage.waitForFunction(() =>
+            document.querySelectorAll('.ui-usage-heat-cell').length === 168 &&
+            document.querySelectorAll('.ui-usage-summary-card').length === 6,
+            null, { timeout: 10000 });
+        await adminPage.evaluate(() => ext_send('SET usage_test_stress=5000'));
+        await adminPage.waitForTimeout(500);
+        await adminPage.evaluate(() => usage_refresh());
+        await adminPage.waitForTimeout(300);
+        const adminUsage = await adminPage.evaluate(async () => {
+            const cells = Array.from(document.querySelectorAll('.ui-usage-heat-cell'));
+            const partial = cells.find(cell => cell.classList.contains('is-partial'));
+            partial?.click();
+            await new Promise(resolve => setTimeout(resolve, 300));
+            const metric = document.getElementById('id-usage-metric');
+            metric.value = 'unique';
+            metric.dispatchEvent(new Event('change', { bubbles: true }));
+            await new Promise(resolve => setTimeout(resolve, 150));
+            const page = document.querySelector('.ui-admin-usage');
+            const rect = page.getBoundingClientRect();
+            return {
+                heading: page.querySelector('.ui-admin-page-header h2')?.textContent,
+                summaryCards: page.querySelectorAll('.ui-usage-summary-card').length,
+                heatmapCells: cells.length,
+                heatmapRows: page.querySelectorAll('.ui-usage-heatmap-row').length,
+                partialCells: page.querySelectorAll('.ui-usage-heat-cell.is-partial').length,
+                unavailableCells: page.querySelectorAll('.ui-usage-heat-cell.is-unavailable').length,
+                selectedMetric: metric.value,
+                dayBars: page.querySelectorAll('#id-usage-day .ui-usage-bar-row').length,
+                hourSummary: page.querySelectorAll('.ui-usage-hour-summary strong').length,
+                overflowVisible: page.querySelector('.ui-usage-overflow')?.textContent || '',
+                memoryText: Array.from(page.querySelectorAll('.ui-usage-summary-card'))
+                    .find(card => card.textContent.includes('Analytics memory'))?.textContent || '',
+                enabledControl: !!document.getElementById('id-usage-enabled'),
+                deleteControl: Array.from(page.querySelectorAll('button'))
+                    .some(button => button.textContent.includes('Delete all usage data')),
+                rawIpVisible: page.textContent.includes('127.0.0.1') ||
+                    page.textContent.includes('::1'),
+                fits: rect.left >= -1 && rect.right <= window.innerWidth + 1,
+                horizontalHeatmapScroll:
+                    document.getElementById('id-usage-heatmap').scrollWidth >=
+                    document.getElementById('id-usage-heatmap').clientWidth
+            };
+        });
         await clickAdminNav('id-nav-update');
         const adminUpgrade = await adminPage.evaluate(() => {
             const rows = Array.from(document.querySelectorAll('.ui-admin-update-action'));
@@ -2139,6 +2183,33 @@ function fetchRawResponse(headers, path) {
         });
         await adminPage.close();
 
+        const usageRoot = path.resolve(
+            process.env.WEBSDR_HARNESS_BUILD_DIR || path.resolve(__dirname, '../build-native'),
+            'config/usage');
+        const usageFiles = [];
+        const collectUsageFiles = directory => {
+            if (!fs.existsSync(directory))
+                return;
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+                const filePath = path.join(directory, entry.name);
+                if (entry.isDirectory())
+                    collectUsageFiles(filePath);
+                else
+                    usageFiles.push(filePath);
+            }
+        };
+        collectUsageFiles(usageRoot);
+        const usageFileAudit = {
+            count: usageFiles.length,
+            rawIpFound: usageFiles.some(file => {
+                const content = fs.readFileSync(file);
+                return content.includes(Buffer.from('127.0.0.1')) ||
+                    content.includes(Buffer.from('::1'));
+            }),
+            largest: usageFiles.reduce((largest, file) =>
+                Math.max(largest, fs.statSync(file).size), 0)
+        };
+
         if (!uiFoundation.selectPresent ||
             uiFoundation.storedTheme !== 'midnight' ||
             uiFoundation.receiverThemeParent !== 'id-rf-theme-actions' ||
@@ -2519,6 +2590,26 @@ function fetchRawResponse(headers, path) {
             adminStatus.runtime.histogramBars < 32 ||
             !adminStatus.runtime.resetButton)
             throw new Error(`invalid modern admin status page: ${JSON.stringify(adminStatus)}`);
+        if (adminUsage.heading !== 'Usage' ||
+            adminUsage.summaryCards !== 6 ||
+            adminUsage.heatmapCells !== 168 ||
+            adminUsage.heatmapRows !== 7 ||
+            adminUsage.partialCells !== 1 ||
+            adminUsage.selectedMetric !== 'unique' ||
+            adminUsage.dayBars !== 24 ||
+            adminUsage.hourSummary !== 4 ||
+            !adminUsage.overflowVisible.includes('frequency') ||
+            !adminUsage.memoryText.includes('KiB') ||
+            !adminUsage.enabledControl ||
+            !adminUsage.deleteControl ||
+            adminUsage.rawIpVisible ||
+            !adminUsage.fits ||
+            !adminUsage.horizontalHeatmapScroll)
+            throw new Error(`invalid admin usage page: ${JSON.stringify(adminUsage)}`);
+        if (usageFileAudit.count < 4 ||
+            usageFileAudit.rawIpFound ||
+            usageFileAudit.largest > 1024 * 1024)
+            throw new Error(`invalid usage report files: ${JSON.stringify(usageFileAudit)}`);
         if (adminUpgrade.actions.length !== 2 ||
             adminUpgrade.actions.some(row => row.display !== 'grid' ||
                 Math.abs(row.buttonWidth - 112) > 1 ||
@@ -2739,6 +2830,7 @@ function fetchRawResponse(headers, path) {
             cloudControlContrast,
             receiverResponsive, faxMobile, faxCollapse, extensionLayouts, drmPanelControls,
             panelToggle, adminFoundation, adminClassic, adminWarningThemes, adminResponsive,
+            adminUsage, usageFileAudit,
             adminControl, adminConnect, adminConfig,
             adminWebpage, adminPublic, adminDX, adminUpdate, adminNetwork, adminGPS,
             adminLog, adminConsole, consoleOpenOrder, consoleANSI, adminExtensions, adminSecurity,

@@ -20,3 +20,7 @@ char* usage_stats_day_json(const char* date);
 char* usage_stats_hour_json(const char* date, int hour);
 char* usage_stats_recent_json(const char* date, int page, int limit);
 const char* usage_stats_last_error();
+
+#ifdef NATIVE_HARNESS
+void usage_stats_test_stress(int iterations);
+#endif

@@ -3801,6 +3801,9 @@ function admin_recv(data)
 			   usage_refresh();
 			   break;
 
+			case "usage_test_stress":
+			   break;
+
 			case "auto_nat":
 				var p = +param[1];
 				//console.log('auto_nat='+ p);

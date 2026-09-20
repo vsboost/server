@@ -432,6 +432,17 @@ void c2s_admin(void* param) {
                 continue;
             }
 
+#ifdef NATIVE_HARNESS
+            int usage_stress;
+            i = sscanf(cmd, "SET usage_test_stress=%d", &usage_stress);
+            if (i == 1) {
+                usage_stats_test_stress(usage_stress);
+                usage_stats_flush_partial();
+                send_msg(conn, SM_NO_DEBUG, "ADM usage_test_stress=done");
+                continue;
+            }
+#endif
+
 
             ////////////////////////////////
             // control
