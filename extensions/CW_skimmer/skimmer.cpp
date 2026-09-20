@@ -83,7 +83,7 @@ void CW_skimmer_main() {
     cw_conf.tsamps = words;
 
     for(int i = 0; i < MAX_RX_CHANS; i++) {
-        states[i].skimmer = new CwSkimmer(snd_rate);
+        states[i].skimmer = NULL;
         states[i].rd_pos = 0;
         states[i].seq_init = false;
         states[i].seq = 0;
@@ -104,9 +104,8 @@ static void CW_skimmer_close(int rx_chan) {
         e->tid = 0;
     }
 
-    for(int i = 0; i < MAX_RX_CHANS; i++) {
-        delete states[i].skimmer;
-    }
+    delete e->skimmer;
+    e->skimmer = NULL;
 }
 
 static void cw_file_data(int rx_chan, int chan, int nsamps, TYPEMONO16* samps, int freqHz) {
@@ -168,6 +167,8 @@ bool CW_skimmer_msgs(char* msg, int rx_chan) {
     if (strcmp(msg, "SET ext_server_init") == 0) {
         printf("CW init rx%d start\n", rx_chan);
         e->chan = rx_chan;	// remember our receiver channel number
+        if (e->skimmer == NULL)
+            e->skimmer = new CwSkimmer(snd_rate);
         e->skimmer->reset();
         e->skimmer->SetCallback([e](int freq, char ch, int wpm) {
             ext_send_msg_encoded(e->chan, DEBUG_MSG, "EXT", "cw_chars", "%c%d,%d", ch, freq, wpm);
@@ -198,15 +199,8 @@ bool CW_skimmer_msgs(char* msg, int rx_chan) {
     }
 
     if (strcmp(msg, "SET cws_stop") == 0) {
-        e->skimmer->reset();
+        if (e->skimmer != NULL) e->skimmer->reset();
         e->test = false;
-        return true;
-    }
-
-    int pwr_calc, filter_neighbors;
-    if (sscanf(msg, "SET cws_params=%d,%d", &pwr_calc, &filter_neighbors) == 2) {
-        printf("cws_params=%d,%d\n", pwr_calc, filter_neighbors);
-        e->skimmer->SetParams((PwrCalc_t)pwr_calc, filter_neighbors != 0);
         return true;
     }
 

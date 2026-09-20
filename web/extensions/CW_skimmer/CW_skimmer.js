@@ -10,10 +10,6 @@ var cws = {
    test: 0,
    texts: [],
 
-   pwr_calc: 0,
-   pwr_calc_s: ['avg_ratio', 'avg_bottom', 'threshold'],
-   filter_neighbors: 1,
-
    log_mins: 0,
    log_interval: null,
 
@@ -185,9 +181,8 @@ function cw_skimmer_controls_setup()
 			w3_divs('',
             w3_inline('',
 				   w3_div('w3-medium w3-text-aqua', '<b>CW skimmer</b>'),
-               w3_div('w3-margin-L-16', 'Luarvique KC1TXE')
+               w3_div('w3-margin-L-16', 'Bayesian HSMM decoder')
 				),
-				w3_div('', '<b><a href="https://github.com/luarvique/csdr-cwskimmer" target="_blank">CSDR based CW skimmer</a></b> &copy; 2025'),
             
 				w3_inline('w3-margin-T-10/w3-margin-between-16',
                w3_button('w3-padding-smaller', 'Clear', 'cws_clear_button_cb', 0),
@@ -195,12 +190,7 @@ function cw_skimmer_controls_setup()
                w3_div('id-cw-bar-container w3-progress-container w3-round-large w3-white w3-hide|width:70px; height:16px',
                   w3_div('id-cw-bar w3-progressbar w3-round-large w3-light-green|width:0%', '&nbsp;')
                )
-            ),
-
-				w3_inline('w3-margin-T-10/w3-margin-between-16',
-               w3_select('w3-text-red', '', 'power calc', 'cws.pwr_calc', cws.pwr_calc, cws.pwr_calc_s, 'cws_pwr_calc_cb'),
-               w3_checkbox('/w3-label-inline w3-label-not-bold/', 'filter neighbors', 'cws.filter_neighbors', cws.filter_neighbors, 'cws_filter_neighbors_cb')
-				)
+            )
 			)
 		);
 	
@@ -210,7 +200,7 @@ function cw_skimmer_controls_setup()
 	time_display_setup('cw');
 
    ext_set_data_height(cws.height);
-	ext_set_controls_width_height(350, 125);
+	ext_set_controls_width_height(350, 100);
 	
 	// our sample file is 12k only
 	if (ext_nom_sample_rate() != 12000)
@@ -228,24 +218,6 @@ function cws_clear_button_cb(path, idx, first)
    if (first) return;
    cws.texts = [];
    w3_innerHTML('id-cws-table', '');
-}
-
-function cws_send_params()
-{
-   ext_send('SET cws_params='+ cws.pwr_calc +','+ (cws.filter_neighbors? 1:0));
-}
-
-function cws_pwr_calc_cb(path, idx, first)
-{
-   if (first) return;
-   cws.pwr_calc = +idx;
-   cws_send_params();
-}
-
-function cws_filter_neighbors_cb(path, checked, first)
-{
-   cws.filter_neighbors = checked;
-   cws_send_params();
 }
 
 /*

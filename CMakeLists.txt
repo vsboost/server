@@ -320,12 +320,6 @@ if(NATIVE_HARNESS)
 
     add_executable(test_cw_skimmer_replay
         tests/test_cw_skimmer_replay.cpp
-        extensions/CW_skimmer/csdr/cw.cpp
-        extensions/CW_skimmer/csdr/module.cpp
-        extensions/CW_skimmer/csdr/ringbuffer.cpp
-        extensions/CW_skimmer/csdr/sink.cpp
-        extensions/CW_skimmer/csdr/source.cpp
-        extensions/CW_skimmer/csdr/writer.cpp
     )
     target_include_directories(test_cw_skimmer_replay PRIVATE
         "${UPSTREAM_DIR}"

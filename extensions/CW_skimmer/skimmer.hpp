@@ -14,12 +14,6 @@
 
 typedef std::function<void(int, char, int)> OutputCallback;
 
-typedef enum {
-    PWR_CALC_AVG_RATIO,
-    PWR_CALC_AVG_BOTTOM,
-    PWR_CALC_THRESHOLD,
-} PwrCalc_t;
-
 class CwSkimmer {
 public:
     explicit CwSkimmer(int sampleRate) :
@@ -55,8 +49,6 @@ public:
             tracks[i].stream->reset();
         }
     }
-
-    void SetParams(PwrCalc_t, bool) {}
 
     void SetCallback(OutputCallback outputCallback)
     {

@@ -135,7 +135,6 @@ int main(int argc, char** argv)
     }
 
     CwSkimmer skimmer(sampleRate);
-    skimmer.SetParams(PWR_CALC_AVG_RATIO, true);
 
     unsigned int samplesFed = 0;
     unsigned int characters = 0;
