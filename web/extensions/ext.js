@@ -873,11 +873,13 @@ function extint_panel_collapse(set)
    var panel = w3_el('id-ext-controls');
    var button = w3_el('id-ext-controls-collapse-btn');
    var icon = w3_el('id-ext-controls-collapse-icon');
-   if (!panel || !button || !icon) return;
+   var content = w3_el('id-ext-controls-container');
+   if (!panel || !button || !icon || !content) return;
 
    var collapsed = isDefined(set)? !!set : !extint.panel_collapsed;
    extint.panel_collapsed = collapsed;
    panel.classList.toggle('ui-extension-collapsed', collapsed);
+   content.setAttribute('aria-hidden', collapsed? 'true':'false');
    button.setAttribute('aria-expanded', collapsed? 'false':'true');
    button.setAttribute('aria-label', collapsed? 'Expand extension controls':'Collapse extension controls');
    button.title = collapsed? 'Expand extension controls':'Collapse extension controls';

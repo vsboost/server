@@ -899,12 +899,70 @@ html, body
 	display: none;
 }
 
+.ui-extension-panel
+{
+	transition: transform 180ms ease-out;
+}
+
+.ui-extension-panel.ui-extension-collapsed
+{
+	transform: translateY(100%);
+}
+
+.class-ext-controls-collapse
+{
+	position: absolute;
+	top: -34px;
+	left: 50%;
+	width: 48px;
+	height: 34px;
+	transform: translateX(-50%);
+	z-index: 10000;
+}
+
+.class-ext-controls-collapse-button
+{
+	display: grid;
+	width: 100%;
+	height: 100%;
+	border: 1px solid #777;
+	border-bottom: 0;
+	border-radius: 8px 8px 0 0;
+	background: #575757;
+	color: white;
+	font-size: 18px;
+	place-items: center;
+	touch-action: manipulation;
+}
+
+.class-ext-controls-collapse-button:focus-visible
+{
+	outline: 2px solid white;
+	outline-offset: 2px;
+}
+
+.ui-extension-panel.ui-extension-collapsed #id-ext-controls-container,
+.ui-extension-panel.ui-extension-collapsed #id-ext-controls-vis,
+.ui-extension-panel.ui-extension-collapsed #id-ext-controls-help
+{
+	visibility: hidden;
+	pointer-events: none;
+}
+
 .class-panel-inner
 {
     position: relative;
 	overflow-y: auto;
 	overflow-x: hidden;
 	height: 100%;
+}
+
+@media (prefers-reduced-motion: reduce)
+{
+	.ui-extension-panel
+	{
+		transition-duration: 0.001ms;
+	}
 }
 
 .class-button

@@ -1704,6 +1704,23 @@
    background: var(--ui-surface-2);
 }
 
+.ui-modern .class-ext-controls-collapse-button {
+   border-color: var(--ui-border-strong);
+   background: var(--ui-bg-raised);
+   color: var(--ui-text);
+   box-shadow: var(--ui-shadow);
+}
+
+.ui-modern .class-ext-controls-collapse-button:hover {
+   border-color: var(--ui-accent);
+   background: var(--ui-surface-2);
+   color: var(--ui-accent);
+}
+
+.ui-modern .class-ext-controls-collapse-button:focus-visible {
+   outline-color: var(--ui-accent);
+}
+
 .ui-modern .cl-dx-label.ui-button {
    min-height: 0;
    padding: 3px;
@@ -3438,6 +3455,16 @@
       right: 0 !important;
       left: auto !important;
       top: 8px !important;
+   }
+
+   .ui-modern .class-ext-controls-collapse {
+      top: -38px;
+      width: 52px;
+      height: 38px;
+   }
+
+   .ui-modern .class-ext-controls-collapse-button {
+      font-size: 20px;
    }
 
    .ui-modern .ui-extension-panel {
