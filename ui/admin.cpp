@@ -381,6 +381,15 @@ void c2s_admin(void* param) {
             }
             kiwi_asfree(usage_month);
 
+            int usage_geo_days;
+            i = sscanf(cmd, "SET usage_geo days=%d", &usage_geo_days);
+            if (i == 1) {
+                char* json = usage_stats_geo_json(usage_geo_days);
+                send_msg_encoded(conn, "ADM", "usage_geo", "%s", json);
+                free(json);
+                continue;
+            }
+
             int usage_days;
             char* usage_metric = NULL;
             i = sscanf(cmd, "SET usage_heatmap days=%d metric=%32ms", &usage_days, &usage_metric);

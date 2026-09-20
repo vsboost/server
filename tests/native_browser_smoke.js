@@ -1690,6 +1690,9 @@ function fetchRawResponse(headers, path) {
         await adminPage.waitForTimeout(500);
         await adminPage.evaluate(() => usage_refresh());
         await adminPage.waitForTimeout(300);
+        await adminPage.waitForFunction(() =>
+            document.querySelectorAll('#id-usage-geo .ui-usage-bar-row').length > 0,
+            null, { timeout: 10000 });
         const adminUsage = await adminPage.evaluate(async () => {
             const cells = Array.from(document.querySelectorAll('.ui-usage-heat-cell'));
             const partial = cells.find(cell => cell.classList.contains('is-partial'));
@@ -1731,6 +1734,9 @@ function fetchRawResponse(headers, path) {
                 summaryCards: page.querySelectorAll('.ui-usage-summary-card').length,
                 cardContrast,
                 monthBars: page.querySelectorAll('#id-usage-month .ui-usage-bar-row').length,
+                geoBars: page.querySelectorAll('#id-usage-geo .ui-usage-bar-row').length,
+                geoRows: page.querySelectorAll('#id-usage-geo tbody tr').length,
+                geoText: page.querySelector('#id-usage-geo')?.textContent || '',
                 heatmapCells: cells.length,
                 heatmapRows: page.querySelectorAll('.ui-usage-heatmap-row').length,
                 partialCells: page.querySelectorAll('.ui-usage-heat-cell.is-partial').length,
@@ -2625,6 +2631,10 @@ function fetchRawResponse(headers, path) {
             adminUsage.summaryCards !== 8 ||
             adminUsage.cardContrast.some(theme => theme.value < 4.5 || theme.label < 4.5) ||
             adminUsage.monthBars < 1 ||
+            adminUsage.geoBars < 1 ||
+            adminUsage.geoRows < 1 ||
+            !adminUsage.geoText.includes('Stress test') ||
+            !adminUsage.geoText.includes('sessions') ||
             adminUsage.heatmapCells !== 168 ||
             adminUsage.heatmapRows !== 7 ||
             adminUsage.partialCells !== 1 ||

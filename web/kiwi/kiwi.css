@@ -678,6 +678,23 @@ input.kiwi-pw
    font-size: 22px;
 }
 
+.ui-usage-geo-summary {
+   display: grid;
+   grid-template-columns: auto 1fr auto 1fr;
+   align-items: baseline;
+   gap: 4px 8px;
+   margin-bottom: 14px;
+}
+
+.ui-usage-geo-summary strong {
+   color: var(--ui-text, #111);
+   font-size: 20px;
+}
+
+.ui-usage-geo-summary span {
+   color: var(--ui-text-soft, #444);
+}
+
 .ui-usage-heatmap-section > header {
    display: flex;
    align-items: flex-end;

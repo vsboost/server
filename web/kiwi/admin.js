@@ -3225,6 +3225,11 @@ function usage_html()
             '<p>Daily listener time for the current UTC month.</p></div></header>' +
          '<div id="id-usage-month" class="ui-usage-chart"><div class="ui-usage-empty">Loading monthly trend</div></div>' +
       '</section>' +
+      '<section class="ui-admin-section">' +
+         '<header><div><h3>Visitor geography</h3>' +
+            '<p>Country and region distribution over the last seven UTC days.</p></div></header>' +
+         '<div id="id-usage-geo" class="ui-usage-chart"><div class="ui-usage-empty">Loading geographic distribution</div></div>' +
+      '</section>' +
       '<section class="ui-admin-section ui-usage-heatmap-section">' +
          '<header><div><h3>Activity heatmap</h3>' +
             '<p>Past seven UTC days in one-hour cells. Select a cell for detailed activity.</p></div>' +
@@ -3285,6 +3290,7 @@ function usage_refresh()
    var month = new Date().toISOString().slice(0, 7);
    ext_send('SET usage_summary');
    ext_send('SET usage_month month='+ month);
+   ext_send('SET usage_geo days=7');
    ext_send('SET usage_heatmap days=7 metric='+ usage.metric);
 }
 
@@ -3345,6 +3351,47 @@ function usage_month_cb(o)
          return day.date.slice(8) + (day.partial? ' *':'');
       })
    );
+}
+
+function usage_geo_cb(o)
+{
+   if (o.error) {
+      w3_innerHTML('id-usage-geo', '<div class="ui-usage-empty">Geographic report unavailable</div>');
+      return;
+   }
+   var regions = (o.regions || []).sort(function(a,b) {
+      return b.seconds - a.seconds || b.sessions - a.sessions;
+   }).slice(0, 20);
+   if (!regions.length) {
+      w3_innerHTML('id-usage-geo', '<div class="ui-usage-empty">No geographic activity recorded</div>');
+      return;
+   }
+   var total = +o.total_seconds || 0;
+   var max = Math.max.apply(null, regions.map(function(region) { return +region.seconds || 0; }).concat([1]));
+   var bars = '<div class="ui-usage-bars">'+ regions.map(function(region) {
+      var seconds = +region.seconds || 0;
+      return '<div class="ui-usage-bar-row"><span>'+ kiwi_clean_html(String(region.label || 'Unknown')) +'</span>' +
+         '<div><i style="width:'+ (seconds / max * 100).toFixed(1) +'%"></i></div>' +
+         '<strong>'+ usage_duration(seconds) +'</strong></div>';
+   }).join('') +'</div>';
+   var rows = regions.map(function(region) {
+      var seconds = +region.seconds || 0;
+      var share = total? seconds / total * 100:0;
+      return '<tr><td>'+ kiwi_clean_html(String(region.label || 'Unknown')) +'</td>' +
+         '<td>'+ (+region.sessions || 0).toLocaleString() +'</td>' +
+         '<td>'+ usage_duration(seconds) +'</td><td>'+ share.toFixed(1) +'%</td></tr>';
+   }).join('');
+   var coverage = (+o.hours_available || 0) +'/'+ (+o.hours_expected || 0) +' hourly periods available';
+   var note = 'Session counts represent session starts; listener share represents time spent.';
+   if (o.overflow) note += ' Bounded geography overflow: '+ (+o.overflow).toLocaleString() +'.';
+   w3_innerHTML('id-usage-geo',
+      '<div class="ui-usage-geo-summary"><strong>'+ (+o.total_sessions || 0).toLocaleString() +
+      '</strong><span>sessions</span><strong>'+ usage_duration(total) +
+      '</strong><span>listener time</span></div>'+ bars +
+      '<div class="ui-usage-table-wrap"><table class="ui-usage-table"><thead><tr>' +
+      '<th>Country / region</th><th>Sessions</th><th>Listener time</th><th>Share</th>' +
+      '</tr></thead><tbody>'+ rows +'</tbody></table></div>' +
+      '<p class="ui-admin-status-note">'+ coverage +'. '+ note +'</p>');
 }
 
 function usage_heatmap_cb(o)
@@ -3801,6 +3848,10 @@ function admin_recv(data)
 
 			case "usage_month":
 			   usage_month_cb(kiwi_JSON_parse('usage_month', decodeURIComponent(param[1])) || {});
+			   break;
+
+			case "usage_geo":
+			   usage_geo_cb(kiwi_JSON_parse('usage_geo', decodeURIComponent(param[1])) || {});
 			   break;
 
 			case "usage_day":

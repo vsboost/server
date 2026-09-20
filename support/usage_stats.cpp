@@ -638,10 +638,19 @@ static bool extract_string(const char* json, const char* key, char* out, size_t 
     const char* p = strstr(json, needle.c_str());
     if (!p) return false;
     p += needle.size();
-    const char* end = strchr(p, '"');
-    if (!end) return false;
-    size_t len = MIN((size_t)(end - p), out_len - 1);
-    memcpy(out, p, len);
+    size_t len = 0;
+    while (*p && *p != '"') {
+        char c = *p++;
+        if (c == '\\') {
+            c = *p++;
+            if (!c) return false;
+            if (c == 'n') c = '\n';
+            else if (c == 'r') c = '\r';
+            else if (c == 't') c = '\t';
+        }
+        if (len + 1 < out_len) out[len++] = c;
+    }
+    if (*p != '"') return false;
     out[len] = '\0';
     return true;
 }
@@ -1375,6 +1384,124 @@ char* usage_stats_month_json(const char* month)
                 day.peak, day.detail_dropped);
     }
     out += "]}";
+    return strdup(out.c_str());
+}
+
+struct geo_report_t {
+    geography_t geo[GEO_CAP];
+    u4_t overflow;
+};
+
+static void geo_report_add(geo_report_t* report, const char* label, u4_t sessions, u64_t seconds)
+{
+    if (!label || !*label) label = "Unknown";
+    geography_t* free_slot = NULL;
+    geography_t* min_slot = NULL;
+    for (int i = 0; i < GEO_CAP; i++) {
+        geography_t* geo = &report->geo[i];
+        if (geo->used && strcmp(geo->label, label) == 0) {
+            geo->sessions += sessions;
+            geo->seconds += seconds;
+            return;
+        }
+        if (!geo->used && !free_slot) free_slot = geo;
+        if (geo->used && (!min_slot || geo->seconds < min_slot->seconds)) min_slot = geo;
+    }
+    if (free_slot) {
+        free_slot->used = true;
+        kiwi_strncpy(free_slot->label, label, sizeof(free_slot->label));
+        free_slot->sessions = sessions;
+        free_slot->seconds = seconds;
+        return;
+    }
+    report->overflow++;
+    if (min_slot) {
+        kiwi_strncpy(min_slot->label, label, sizeof(min_slot->label));
+        min_slot->sessions = sessions;
+        min_slot->seconds += seconds;
+    }
+}
+
+static bool geo_report_merge_json(geo_report_t* report, const char* json)
+{
+    u64_t overflow = 0;
+    extract_u64(json, "geography_overflow", &overflow);
+    report->overflow += overflow;
+    const char* p = strstr(json, "\"geography\":[");
+    if (!p) return false;
+    p += strlen("\"geography\":[");
+    while (*p && *p != ']') {
+        const char* begin = strchr(p, '{');
+        if (!begin) break;
+        const char* end = strchr(begin, '}');
+        if (!end) return false;
+        std::string item(begin, end - begin + 1);
+        char label[GEO_LEN];
+        u64_t sessions = 0, seconds = 0;
+        if (!extract_string(item.c_str(), "label", label, sizeof(label)) ||
+                !extract_u64(item.c_str(), "sessions", &sessions) ||
+                !extract_u64(item.c_str(), "seconds", &seconds)) {
+            return false;
+        }
+        geo_report_add(report, label, sessions, seconds);
+        p = end + 1;
+    }
+    return true;
+}
+
+char* usage_stats_geo_json(int days)
+{
+    days = CLAMP(days, 1, 7);
+    time_t now = time(NULL);
+    struct tm tm;
+    gmtime_r(&now, &tm);
+    tm.tm_hour = tm.tm_min = tm.tm_sec = 0;
+    s64_t start = timegm(&tm) - (s64_t)(days - 1) * 86400;
+    s64_t current = hour_floor(now);
+    geo_report_t* report = (geo_report_t*)calloc(1, sizeof(*report));
+    if (!report) return strdup("{\"error\":\"out of memory\"}");
+
+    int available = 0;
+    for (s64_t epoch = start; epoch < current; epoch += 3600) {
+        char date[16], hour[4];
+        format_hour(epoch, date, sizeof(date), hour, sizeof(hour));
+        std::string path = std::string(usage_root()) + "/hourly/" + date + "/" + hour + ".json";
+        char* json = read_file_alloc(path);
+        if (!json) continue;
+        if (geo_report_merge_json(report, json)) available++;
+        free(json);
+    }
+    for (int i = 0; i < GEO_CAP; i++) {
+        geography_t* geo = &current_hour.geo[i];
+        if (geo->used) geo_report_add(report, geo->label, geo->sessions, geo->seconds);
+    }
+    available++;
+
+    u64_t total_seconds = 0;
+    u4_t total_sessions = 0;
+    for (int i = 0; i < GEO_CAP; i++) {
+        geography_t* geo = &report->geo[i];
+        if (!geo->used) continue;
+        total_seconds += geo->seconds;
+        total_sessions += geo->sessions;
+    }
+
+    std::string out;
+    appendf(out, "{\"days\":%d,\"start\":%lld,\"end\":%lld,\"hours_available\":%d,"
+            "\"hours_expected\":%lld,\"total_seconds\":%llu,\"total_sessions\":%u,"
+            "\"overflow\":%u,\"regions\":[",
+            days, start, (s64_t)now, available, (current - start) / 3600 + 1,
+            total_seconds, total_sessions, report->overflow);
+    bool comma = false;
+    for (int i = 0; i < GEO_CAP; i++) {
+        geography_t* geo = &report->geo[i];
+        if (!geo->used) continue;
+        appendf(out, "%s{\"label\":\"%s\",\"seconds\":%llu,\"sessions\":%u}",
+                comma ? "," : "", json_escape(geo->label).c_str(), geo->seconds, geo->sessions);
+        comma = true;
+    }
+    out += "]}";
+    free(report);
     return strdup(out.c_str());
 }
 
