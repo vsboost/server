@@ -338,8 +338,8 @@ static void visitor_hash(const char* ip, u1_t* out)
     else len = strlen(ip);
     unsigned out_len = 0;
     if (!HMAC(EVP_sha256(), identity_key, sizeof(identity_key),
-            (const unsigned char*)data, len, out, &out_len) || out_len != HASH_BYTES) {
-        memset(out, 0, HASH_BYTES);
+            (const unsigned char*)data, len, out, &out_len) || out_len != HASH_LEN) {
+        memset(out, 0, HASH_LEN);
     }
 }
 
