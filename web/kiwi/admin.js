@@ -3396,7 +3396,7 @@ function usage_bar_chart(items, valueKey, labelFn)
    var max = Math.max.apply(null, items.map(function(item) { return +item[valueKey] || 0; }).concat([1]));
    return '<div class="ui-usage-bars">'+ items.map(function(item) {
       var value = +item[valueKey] || 0;
-      return '<div class="ui-usage-bar-row"><span>'+ labelFn(item) +'</span>' +
+      return '<div class="ui-usage-bar-row"><span>'+ kiwi_clean_html(String(labelFn(item))) +'</span>' +
          '<div><i style="width:'+ (value / max * 100).toFixed(1) +'%"></i></div>' +
          '<strong>'+ (valueKey == 'seconds'? usage_duration(value):value.toFixed(1)) +'</strong></div>';
    }).join('') +'</div>';
@@ -3452,9 +3452,12 @@ function usage_recent_cb(o)
       '<th>Start</th><th>End</th></tr></thead><tbody>';
    sessions.forEach(function(s) {
       html += '<tr><td>'+ new Date(s.start * 1000).toISOString().replace('T', ' ').slice(0, 19) +'</td>' +
-         '<td>'+ usage_duration(s.duration) +'</td><td><code>'+ s.visitor_hash +'</code></td>' +
-         '<td>'+ (s.callsign || '-') +'</td><td>'+ (s.geo || 'Unknown') +'</td><td>'+ s.client +'</td>' +
-         '<td>'+ s.start_khz +' kHz '+ s.start_mode +'</td><td>'+ s.end_khz +' kHz '+ s.end_mode +'</td></tr>';
+         '<td>'+ usage_duration(s.duration) +'</td><td><code>'+ kiwi_clean_html(String(s.visitor_hash || '')) +'</code></td>' +
+         '<td>'+ kiwi_clean_html(String(s.callsign || '-')) +'</td>' +
+         '<td>'+ kiwi_clean_html(String(s.geo || 'Unknown')) +'</td>' +
+         '<td>'+ kiwi_clean_html(String(s.client || '')) +'</td>' +
+         '<td>'+ (+s.start_khz || 0) +' kHz '+ kiwi_clean_html(String(s.start_mode || '')) +'</td>' +
+         '<td>'+ (+s.end_khz || 0) +' kHz '+ kiwi_clean_html(String(s.end_mode || '')) +'</td></tr>';
    });
    html += '</tbody></table></div>';
    w3_innerHTML('id-usage-recent', html);

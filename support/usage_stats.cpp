@@ -1492,7 +1492,39 @@ char* usage_stats_recent_json(const char* date, int page, int limit)
     int skip = page * limit;
     int emitted = 0, seen = 0;
     std::string out = "{\"date\":\"" + json_escape(date) + "\",\"sessions\":[";
-    for (int h = 23; h >= 0 && emitted < limit; h--) {
+    char current_date[16], current_hour_name[4];
+    format_hour(current_hour.hour_start, current_date, sizeof(current_date),
+            current_hour_name, sizeof(current_hour_name));
+    bool current_date_selected = strcmp(date, current_date) == 0;
+    if (current_date_selected) {
+        for (int i = current_hour.detail_count - 1; i >= 0; i--) {
+            session_detail_t* d = &current_hour.detail[i];
+            if (seen++ < skip || emitted >= limit) continue;
+            char hash[HASH_LEN * 2 + 1];
+            hash_hex(d->visitor_hash, hash, HASH_LEN);
+            hash[12] = '\0';
+            if (emitted++) out += ",";
+            out += "{\"visitor_hash\":\"";
+            out += hash;
+            out += "\",\"callsign\":\"";
+            out += json_escape(d->callsign);
+            out += "\",\"geo\":\"";
+            out += json_escape(d->geo);
+            out += "\",\"client\":\"";
+            out += json_escape(d->client);
+            appendf(out, "\",\"start\":%lld,\"end\":%lld,\"duration\":%lld,"
+                    "\"start_khz\":%d,\"end_khz\":%d,\"start_mode\":\"%s\","
+                    "\"end_mode\":\"%s\",\"close_reason\":\"%s\"}",
+                    d->start_utc, d->end_utc, MAX(0LL, d->end_utc - d->start_utc),
+                    d->start_freq_kHz, d->end_freq_kHz,
+                    json_escape(rx_enum2mode(d->start_mode)).c_str(),
+                    json_escape(rx_enum2mode(d->end_mode)).c_str(),
+                    json_escape(d->close_reason).c_str());
+        }
+    }
+
+    int newest_hour = current_date_selected ? atoi(current_hour_name) - 1 : 23;
+    for (int h = newest_hour; h >= 0; h--) {
         char path[256];
         snprintf(path, sizeof(path), "%s/sessions/%s/%02d.json", usage_root(), date, h);
         char* json = read_file_alloc(path);
@@ -1560,8 +1592,11 @@ void usage_stats_test_stress(int iterations)
             session_detail_t* d = &current_hour.detail[current_hour.detail_count++];
             memset(d, 0, sizeof(*d));
             memcpy(d->visitor_hash, hash, sizeof(d->visitor_hash));
-            kiwi_strncpy(d->callsign, "STRESS", sizeof(d->callsign));
-            kiwi_strncpy(d->geo, "Stress test", sizeof(d->geo));
+            bool xss_probe = current_hour.detail_count == DETAIL_CAP;
+            kiwi_strncpy(d->callsign, xss_probe ? "<img id=usage-xss-probe>" : "STRESS",
+                    sizeof(d->callsign));
+            kiwi_strncpy(d->geo, xss_probe ? "<script>usage-xss</script>" : "Stress test",
+                    sizeof(d->geo));
             kiwi_strncpy(d->client, "test", sizeof(d->client));
             d->start_utc = current_hour.hour_start;
             d->end_utc = current_hour.hour_start + 1;

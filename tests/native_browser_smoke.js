@@ -1720,6 +1720,10 @@ function fetchRawResponse(headers, path) {
                     .some(button => button.textContent.includes('Delete all usage data')),
                 rawIpVisible: page.textContent.includes('127.0.0.1') ||
                     page.textContent.includes('::1'),
+                injectedMarkup: !!page.querySelector('#usage-xss-probe') ||
+                    !!page.querySelector('#id-usage-recent script'),
+                escapedMarkupVisible: page.querySelector('#id-usage-recent')?.textContent.includes(
+                    '<img id=usage-xss-probe>') || false,
                 fits: rect.left >= -1 && rect.right <= window.innerWidth + 1,
                 horizontalHeatmapScroll:
                     document.getElementById('id-usage-heatmap').scrollWidth >=
@@ -2605,6 +2609,8 @@ function fetchRawResponse(headers, path) {
             !adminUsage.enabledControl ||
             !adminUsage.deleteControl ||
             adminUsage.rawIpVisible ||
+            adminUsage.injectedMarkup ||
+            !adminUsage.escapedMarkupVisible ||
             !adminUsage.fits ||
             !adminUsage.horizontalHeatmapScroll)
             throw new Error(`invalid admin usage page: ${JSON.stringify(adminUsage)}`);
