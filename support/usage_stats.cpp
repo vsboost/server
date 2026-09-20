@@ -134,6 +134,9 @@ static bool enabled = true;
 static bool initialized;
 static char last_error[160];
 
+static bool valid_date(const char* date);
+static bool remove_tree_contents(const std::string& path);
+
 static const char* usage_root()
 {
 #ifdef NATIVE_HARNESS
@@ -441,7 +444,7 @@ static void extension_add(hour_t* hour, const char* name, bool started)
     }
 }
 
-static void geography_add(hour_t* hour, const char* label, bool new_session)
+static void geography_add(hour_t* hour, const char* label, bool new_session, bool add_second)
 {
     if (!label || !*label) label = "Unknown";
     geography_t* free_slot = NULL;
@@ -449,7 +452,7 @@ static void geography_add(hour_t* hour, const char* label, bool new_session)
     for (int i = 0; i < GEO_CAP; i++) {
         geography_t* geo = &hour->geo[i];
         if (geo->used && strcmp(geo->label, label) == 0) {
-            geo->seconds++;
+            if (add_second) geo->seconds++;
             if (new_session) geo->sessions++;
             return;
         }
@@ -459,14 +462,14 @@ static void geography_add(hour_t* hour, const char* label, bool new_session)
     if (free_slot) {
         free_slot->used = true;
         kiwi_strncpy(free_slot->label, label, sizeof(free_slot->label));
-        free_slot->seconds = 1;
+        free_slot->seconds = add_second ? 1 : 0;
         free_slot->sessions = new_session ? 1 : 0;
         return;
     }
     hour->geography_overflow++;
     if (min_slot) {
         kiwi_strncpy(min_slot->label, label, sizeof(min_slot->label));
-        min_slot->seconds++;
+        if (add_second) min_slot->seconds++;
         min_slot->sessions = new_session ? 1 : 0;
     }
 }
@@ -504,6 +507,7 @@ static void start_session(int ch, conn_t* conn, s64_t now)
 
     current_hour.session_starts++;
     hll_add(&current_hour.unique, a->visitor_hash);
+    geography_add(&current_hour, a->geo, true, false);
 }
 
 static void finish_session(active_t* a, s64_t now, const char* reason)
@@ -684,6 +688,28 @@ static bool load_hour(s64_t epoch, persisted_hour_t* out, hll_t* hll = NULL)
     return ok;
 }
 
+static bool load_rollup_file(const std::string& path, persisted_hour_t* out, hll_t* hll)
+{
+    char* json = read_file_alloc(path);
+    if (!json) return false;
+    memset(out, 0, sizeof(*out));
+    u64_t v;
+    bool ok = extract_u64(json, "start", &v);
+    out->hour_start = v;
+    ok &= extract_u64(json, "listener_seconds", &out->listener_seconds);
+    ok &= extract_u64(json, "sessions", &v); out->sessions = v;
+    ok &= extract_u64(json, "unique_estimate", &v); out->unique = v;
+    ok &= extract_u64(json, "peak_concurrent", &v); out->peak = v;
+    extract_u64(json, "concurrency_sum", &out->concurrency_sum);
+    extract_u64(json, "concurrency_samples", &out->concurrency_samples);
+    extract_u64(json, "detail_dropped", &v); out->detail_dropped = v;
+    char hex[HLL_REGS * 2 + 1];
+    ok &= extract_string(json, "hll", hex, sizeof(hex)) && hll_from_hex(hex, hll);
+    out->valid = ok;
+    free(json);
+    return ok;
+}
+
 struct rollup_param_t {
     s64_t start;
     int count;
@@ -737,6 +763,158 @@ static void write_day_rollup(s64_t completed_hour)
     write_atomic_json(dir + "/" + date + ".json", write_rollup_json, &rp);
 }
 
+struct month_rollup_param_t {
+    s64_t month_start;
+    int days;
+};
+
+static bool write_month_rollup_json(FILE* fp, void* param)
+{
+    month_rollup_param_t* rp = (month_rollup_param_t*)param;
+    u64_t listener = 0, concurrency_sum = 0, concurrency_samples = 0;
+    u4_t sessions = 0, peak = 0, dropped = 0;
+    hll_t hll;
+    memset(&hll, 0, sizeof(hll));
+    int present = 0;
+    for (int i = 0; i < rp->days; i++) {
+        s64_t epoch = rp->month_start + (s64_t)i * 86400;
+        char date[16], ignored[4];
+        format_hour(epoch, date, sizeof(date), ignored, sizeof(ignored));
+        std::string path = std::string(usage_root()) + "/daily/" + date + ".json";
+        persisted_hour_t day;
+        hll_t dh;
+        if (!load_rollup_file(path, &day, &dh)) continue;
+        present++;
+        listener += day.listener_seconds;
+        sessions += day.sessions;
+        peak = MAX(peak, day.peak);
+        dropped += day.detail_dropped;
+        concurrency_sum += day.concurrency_sum;
+        concurrency_samples += day.concurrency_samples;
+        hll_merge(&hll, &dh);
+    }
+    char hex[HLL_REGS * 2 + 1];
+    hll_hex(&hll, hex);
+    fprintf(fp, "{\"schema\":%d,\"period\":\"month\",\"start\":%lld,\"source_days\":%d,"
+                "\"listener_seconds\":%llu,\"sessions\":%u,\"unique_estimate\":%u,"
+                "\"peak_concurrent\":%u,\"concurrency_sum\":%llu,\"concurrency_samples\":%llu,"
+                "\"detail_dropped\":%u,\"hll\":\"%s\"}\n",
+            USAGE_SCHEMA, rp->month_start, present, listener, sessions, hll_estimate(&hll),
+            peak, concurrency_sum, concurrency_samples, dropped, hex);
+    return ferror(fp) == 0;
+}
+
+static void write_month_rollup(s64_t completed_hour)
+{
+    time_t current_t = completed_hour;
+    time_t next_t = completed_hour + 3600;
+    struct tm current_tm, next_tm;
+    gmtime_r(&current_t, &current_tm);
+    gmtime_r(&next_t, &next_tm);
+    if (current_tm.tm_mon == next_tm.tm_mon) return;
+
+    struct tm start_tm = current_tm;
+    start_tm.tm_mday = 1;
+    start_tm.tm_hour = start_tm.tm_min = start_tm.tm_sec = 0;
+    s64_t month_start = timegm(&start_tm);
+    int days = current_tm.tm_mday;
+    char month[16];
+    strftime(month, sizeof(month), "%Y-%m", &current_tm);
+    std::string dir = path_join(usage_root(), "monthly");
+    if (!mkdir_tree(dir)) return;
+    month_rollup_param_t rp = { month_start, days };
+    write_atomic_json(dir + "/" + month + ".json", write_month_rollup_json, &rp);
+}
+
+static bool date_name_epoch(const char* name, const char* suffix, s64_t* epoch)
+{
+    size_t suffix_len = suffix ? strlen(suffix) : 0;
+    size_t len = strlen(name);
+    if (suffix_len && (len <= suffix_len || strcmp(name + len - suffix_len, suffix) != 0))
+        return false;
+    size_t date_len = len - suffix_len;
+    if (date_len != 10) return false;
+    char date[11];
+    memcpy(date, name, 10);
+    date[10] = '\0';
+    if (!valid_date(date)) return false;
+    struct tm tm;
+    memset(&tm, 0, sizeof(tm));
+    int year, month, day;
+    sscanf(date, "%d-%d-%d", &year, &month, &day);
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    *epoch = timegm(&tm);
+    return true;
+}
+
+static void cleanup_dated_directories(const char* category, s64_t cutoff)
+{
+    std::string base = path_join(usage_root(), category);
+    DIR* dir = opendir(base.c_str());
+    if (!dir) return;
+    struct dirent* de;
+    while ((de = readdir(dir)) != NULL) {
+        if (de->d_name[0] == '.') continue;
+        s64_t epoch;
+        if (!date_name_epoch(de->d_name, NULL, &epoch) || epoch >= cutoff) continue;
+        std::string child = base + "/" + de->d_name;
+        if (remove_tree_contents(child)) rmdir(child.c_str());
+    }
+    closedir(dir);
+}
+
+static void cleanup_daily_files(s64_t cutoff)
+{
+    std::string base = path_join(usage_root(), "daily");
+    DIR* dir = opendir(base.c_str());
+    if (!dir) return;
+    struct dirent* de;
+    while ((de = readdir(dir)) != NULL) {
+        s64_t epoch;
+        if (!date_name_epoch(de->d_name, ".json", &epoch) || epoch >= cutoff) continue;
+        unlink((base + "/" + de->d_name).c_str());
+    }
+    closedir(dir);
+}
+
+static void cleanup_monthly_files(const struct tm* cutoff_tm)
+{
+    std::string base = path_join(usage_root(), "monthly");
+    DIR* dir = opendir(base.c_str());
+    if (!dir) return;
+    int cutoff_value = (cutoff_tm->tm_year + 1900) * 12 + cutoff_tm->tm_mon;
+    struct dirent* de;
+    while ((de = readdir(dir)) != NULL) {
+        int year, month;
+        char tail;
+        if (sscanf(de->d_name, "%d-%d.json%c", &year, &month, &tail) != 2) continue;
+        int value = year * 12 + month - 1;
+        if (value < cutoff_value) unlink((base + "/" + de->d_name).c_str());
+    }
+    closedir(dir);
+}
+
+static void cleanup_retention(s64_t now)
+{
+    s64_t day_start = now - (now % 86400);
+    cleanup_dated_directories("hourly", day_start - (HOURLY_RETENTION_DAYS - 1) * 86400LL);
+    cleanup_dated_directories("sessions", day_start - 30 * 86400LL);
+
+    time_t t = now;
+    struct tm cutoff_tm;
+    gmtime_r(&t, &cutoff_tm);
+    cutoff_tm.tm_mday = 1;
+    cutoff_tm.tm_hour = cutoff_tm.tm_min = cutoff_tm.tm_sec = 0;
+    cutoff_tm.tm_mon -= 24;
+    s64_t cutoff = timegm(&cutoff_tm);
+    time_t cutoff_t = (time_t)cutoff;
+    gmtime_r(&cutoff_t, &cutoff_tm);
+    cleanup_daily_files(cutoff);
+    cleanup_monthly_files(&cutoff_tm);
+}
+
 static bool write_state_json(FILE* fp, void* param)
 {
     hour_t* hour = (hour_t*)param;
@@ -757,6 +935,8 @@ static void persist_hour(hour_t* hour)
     bool ok = write_atomic_json(hourly_dir + "/" + hh + ".json", write_hour_json, hour);
     if (ok) ok = write_atomic_json(session_dir + "/" + hh + ".json", write_sessions_json, hour);
     if (ok) write_day_rollup(hour->hour_start);
+    if (ok) write_month_rollup(hour->hour_start);
+    if (ok) cleanup_retention(hour->hour_start + 3600);
     if (ok) write_atomic_json(path_join(usage_root(), "state.json"), write_state_json, hour);
 }
 
@@ -926,7 +1106,7 @@ void usage_stats_tick()
         bool ext_started = strcmp(a->last_ext, ext_name) != 0 && *ext_name;
         extension_add(&current_hour, ext_name, ext_started);
         kiwi_strncpy(a->last_ext, ext_name, sizeof(a->last_ext));
-        geography_add(&current_hour, a->geo, false);
+        geography_add(&current_hour, a->geo, false, true);
     }
     current_hour.peak_concurrent = MAX(current_hour.peak_concurrent, concurrent);
     current_hour.concurrency_sum += concurrent;
@@ -993,7 +1173,8 @@ char* usage_stats_heatmap_json(int days, const char* metric)
         metric = "listener_minutes";
     s64_t now = time(NULL);
     s64_t current = hour_floor(now);
-    s64_t start = current - (days * 24 - 1) * 3600LL;
+    s64_t today_start = current - (current % 86400);
+    s64_t start = today_start - (days - 1) * 86400LL;
     std::string out = "{\"metric\":\"";
     out += json_escape(metric ? metric : "listener_minutes");
     out += "\",\"estimated_unique\":true,\"cells\":[";
@@ -1206,3 +1387,37 @@ const char* usage_stats_last_error()
 {
     return last_error;
 }
+
+#ifdef NATIVE_HARNESS
+void usage_stats_test_stress(int iterations)
+{
+    iterations = CLAMP(iterations, 1, 100000);
+    for (int i = 0; i < iterations; i++) {
+        char synthetic[64];
+        snprintf(synthetic, sizeof(synthetic), "198.51.100.%d-%d", i & 255, i);
+        u1_t hash[HASH_LEN];
+        visitor_hash(synthetic, hash);
+        hll_add(&current_hour.unique, hash);
+        current_hour.session_starts++;
+        current_hour.listener_seconds++;
+        frequency_add(&current_hour, 1000 + i, i % 8, true);
+        geography_add(&current_hour, "Stress test", true, true);
+        extension_add(&current_hour, "stress", true);
+        if (current_hour.detail_count < DETAIL_CAP) {
+            session_detail_t* d = &current_hour.detail[current_hour.detail_count++];
+            memset(d, 0, sizeof(*d));
+            memcpy(d->visitor_hash, hash, sizeof(d->visitor_hash));
+            kiwi_strncpy(d->callsign, "STRESS", sizeof(d->callsign));
+            kiwi_strncpy(d->geo, "Stress test", sizeof(d->geo));
+            kiwi_strncpy(d->client, "test", sizeof(d->client));
+            d->start_utc = current_hour.hour_start;
+            d->end_utc = current_hour.hour_start + 1;
+            d->start_freq_kHz = d->end_freq_kHz = 1000 + i;
+            d->start_mode = d->end_mode = i % 8;
+            kiwi_strncpy(d->close_reason, "test", sizeof(d->close_reason));
+        } else {
+            current_hour.detail_dropped++;
+        }
+    }
+}
+#endif
