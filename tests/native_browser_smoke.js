@@ -2128,8 +2128,10 @@ function fetchRawResponse(headers, path) {
                     heading => heading.textContent),
                 userPassword: !!document.getElementById('id-adm.user_password'),
                 adminPassword: !!document.getElementById('id-adm.admin_password'),
-                restrictEnabled: !!document.getElementById('id-adm.restrict_mode_enabled'),
-                restrictPassword: !!document.getElementById('id-adm.restrict_mode_password')
+                restrictEnabled: document.getElementsByClassName(
+                    'id-adm.restrict_mode_enabled').length === 2,
+                restrictPassword: !!document.getElementById('id-adm.restrict_mode_password'),
+                restrictPasswordStatus: !!document.getElementById('id-restrict-mode-password-status')
             };
         });
         await adminPage.setViewportSize({ width: 390, height: 844 });
@@ -2814,7 +2816,8 @@ function fetchRawResponse(headers, path) {
             !adminSecurity.userPassword ||
             !adminSecurity.adminPassword ||
             !adminSecurity.restrictEnabled ||
-            !adminSecurity.restrictPassword)
+            !adminSecurity.restrictPassword ||
+            !adminSecurity.restrictPasswordStatus)
             throw new Error(
                 `invalid modern admin Security page: ${JSON.stringify(adminSecurity)}`);
         if (adminExtensionsMobile.navDisplay !== 'flex' ||

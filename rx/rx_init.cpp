@@ -538,16 +538,14 @@ void update_vars_from_config(bool called_at_init) {
     bool ok;
     const char* key;
     char* encrypted;
-    static u4_t user_pwd_seq, admin_pwd_seq, restrict_pwd_seq;
+    static u4_t user_pwd_seq, admin_pwd_seq;
 
     if (called_at_init) {
         user_pwd_seq = admcfg_default_int("user_pwd_seq", 0, &update_admcfg);
         admin_pwd_seq = admcfg_default_int("admin_pwd_seq", 0, &update_admcfg);
-        restrict_pwd_seq = admcfg_default_int("restrict_pwd_seq", 0, &update_admcfg);
     }
     u4_t updated_user_pwd_seq = admcfg_int("user_pwd_seq", NULL, CFG_REQUIRED);
     u4_t updated_admin_pwd_seq = admcfg_int("admin_pwd_seq", NULL, CFG_REQUIRED);
-    u4_t updated_restrict_pwd_seq = admcfg_int("restrict_pwd_seq", NULL, CFG_REQUIRED);
 
     bool eup_exists = kiwi_file_exists(DIR_CFG "/.eup");
     bool user_seq_diff = (user_pwd_seq != updated_user_pwd_seq);
@@ -603,28 +601,6 @@ void update_vars_from_config(bool called_at_init) {
         cfg_string_free(key);
     }
 
-    bool erp_exists = kiwi_file_exists(DIR_CFG "/.erp");
-    bool restrict_seq_diff = (restrict_pwd_seq != updated_restrict_pwd_seq);
-    if (!erp_exists || restrict_seq_diff) {
-        restrict_pwd_seq = updated_restrict_pwd_seq;
-        key = admcfg_string("restrict_mode_password", NULL, CFG_REQUIRED);
-
-        if (!erp_exists && key && strcmp(key, "(encrypted)") == 0) {
-            cfg_string_free(key);
-            key = NULL;
-        }
-
-        encrypted = kiwi_crypt_generate(key, restrict_pwd_seq);
-        n = kiwi_file_write("erp", DIR_CFG "/.erp", encrypted, strlen(encrypted), /* add_nl */ true);
-        free(encrypted);
-
-        if (n) {
-            admcfg_set_string("restrict_mode_password", (key == NULL || *key == '\0') ? "" : "(encrypted)");
-            update_admcfg = true;
-        }
-
-        cfg_string_free(key);
-    }
 #endif
 
     // FIXME: resolve problem of ip_address.xxx vs ip_address:{xxx} in .json files

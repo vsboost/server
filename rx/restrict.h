@@ -14,4 +14,5 @@ typedef struct conn_st conn_t;
 bool restrict_mode_reload_policy();
 bool restrict_mode_tune_allowed(conn_t* conn, double freq_kHz);
 bool restrict_mode_unlock(conn_t* conn, char* password);
+bool restrict_mode_set_password(const char* password);
 void restrict_mode_send_state(conn_t* conn);
