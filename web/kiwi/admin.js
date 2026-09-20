@@ -3202,6 +3202,244 @@ function admin_resize()
 	console_resize();
 }
 
+var usage = {
+   metric: 'listener_minutes',
+   heatmap: null,
+   summary: null,
+   selected_epoch: null,
+   update_interval: null
+};
+
+function usage_html()
+{
+   return w3_div('id-usage w3-hide ui-admin-usage',
+      '<header class="ui-admin-page-header">' +
+         '<div><span>RECEIVER ANALYTICS</span><h2>Usage</h2></div>' +
+         '<p>UTC activity summaries with privacy-preserving visitor identifiers.</p>' +
+      '</header>' +
+      '<section class="ui-usage-summary" id="id-usage-summary">' +
+         '<div class="ui-usage-empty">Waiting for usage data</div>' +
+      '</section>' +
+      '<section class="ui-admin-section ui-usage-heatmap-section">' +
+         '<header><div><h3>Activity heatmap</h3>' +
+            '<p>Past seven UTC days in one-hour cells. Select a cell for detailed activity.</p></div>' +
+            '<label class="ui-usage-metric">Metric ' +
+               '<select id="id-usage-metric" onchange="usage_metric_change(this.value)">' +
+                  '<option value="listener_minutes">Listener minutes</option>' +
+                  '<option value="sessions">Session starts</option>' +
+                  '<option value="unique">Estimated unique visitors</option>' +
+               '</select>' +
+            '</label>' +
+         '</header>' +
+         '<div class="ui-usage-heatmap-hours" id="id-usage-heatmap-hours"></div>' +
+         '<div class="ui-usage-heatmap" id="id-usage-heatmap">' +
+            '<div class="ui-usage-empty">Loading seven-day heatmap</div>' +
+         '</div>' +
+         '<div class="ui-usage-legend"><span>Less active</span><i></i><i></i><i></i><i></i><i></i><span>More active</span></div>' +
+      '</section>' +
+      '<div class="ui-admin-status-grid ui-usage-detail-grid">' +
+         '<section class="ui-admin-section">' +
+            '<header><div><h3>Selected day</h3><p>Hourly activity for the selected UTC date.</p></div></header>' +
+            '<div id="id-usage-day" class="ui-usage-chart"><div class="ui-usage-empty">Select a heatmap cell</div></div>' +
+         '</section>' +
+         '<section class="ui-admin-section">' +
+            '<header><div><h3>Selected hour</h3><p>Frequency, extension, and geographic activity.</p></div></header>' +
+            '<div id="id-usage-hour"><div class="ui-usage-empty">Select a heatmap cell</div></div>' +
+         '</section>' +
+      '</div>' +
+      '<section class="ui-admin-section">' +
+         '<header><div><h3>Recent sessions</h3>' +
+            '<p>30-day detail uses keyed IP hashes; raw addresses are never shown or stored.</p></div></header>' +
+         '<div id="id-usage-recent"><div class="ui-usage-empty">Select a heatmap cell</div></div>' +
+      '</section>' +
+      '<section class="ui-admin-section ui-usage-controls">' +
+         '<header><div><h3>Collection controls</h3><p>Report writes occur only at UTC hour boundaries.</p></div></header>' +
+         '<div class="ui-usage-control-row">' +
+            '<label><input id="id-usage-enabled" type="checkbox" onchange="usage_enabled_change(this.checked)"> Enable usage tracking</label>' +
+            '<button class="w3-button w3-red" onclick="usage_delete_click()">Delete all usage data</button>' +
+         '</div>' +
+         '<div id="id-usage-status" class="ui-admin-status-note"></div>' +
+      '</section>'
+   );
+}
+
+function usage_focus()
+{
+   usage_refresh();
+   kiwi_clearInterval(usage.update_interval);
+   usage.update_interval = setInterval(usage_refresh, 10000);
+}
+
+function usage_blur()
+{
+   kiwi_clearInterval(usage.update_interval);
+}
+
+function usage_refresh()
+{
+   ext_send('SET usage_summary');
+   ext_send('SET usage_heatmap days=7 metric='+ usage.metric);
+}
+
+function usage_metric_change(metric)
+{
+   usage.metric = metric;
+   ext_send('SET usage_heatmap days=7 metric='+ usage.metric);
+}
+
+function usage_enabled_change(enabled)
+{
+   ext_send('SET usage_enabled='+ (enabled? 1:0));
+}
+
+function usage_delete_click()
+{
+   if (!confirm('Delete all usage reports and reset the private visitor hash key?')) return;
+   ext_send('SET usage_delete=DELETE');
+}
+
+function usage_duration(seconds)
+{
+   seconds = Math.max(0, +seconds || 0);
+   if (seconds < 60) return seconds.toFixed(0) +'s';
+   if (seconds < 3600) return (seconds / 60).toFixed(1) +'m';
+   return (seconds / 3600).toFixed(1) +'h';
+}
+
+function usage_summary_cb(o)
+{
+   usage.summary = o;
+   var cards = [
+      ['Listener time', usage_duration(o.listener_seconds)],
+      ['Session starts', (+o.sessions || 0).toLocaleString()],
+      ['Estimated unique', (+o.unique || 0).toLocaleString()],
+      ['Peak concurrent', (+o.peak || 0).toLocaleString()],
+      ['Average concurrent', (+o.average_concurrent || 0).toFixed(2)],
+      ['Analytics memory', ((+o.memory_bytes || 0) / 1024).toFixed(1) +' KiB']
+   ];
+   w3_innerHTML('id-usage-summary', cards.map(function(card) {
+      return '<div class="ui-usage-summary-card"><span>'+ card[0] +'</span><strong>'+ card[1] +'</strong></div>';
+   }).join(''));
+   var enabled = w3_el('id-usage-enabled');
+   if (enabled) enabled.checked = !!o.enabled;
+   var status = o.last_error? 'Last write error: '+ o.last_error :
+      'Unique visitors are approximate. Current-hour activity is held in bounded memory.';
+   w3_innerHTML('id-usage-status', status);
+}
+
+function usage_heatmap_cb(o)
+{
+   usage.heatmap = o;
+   var cells = o.cells || [];
+   var values = cells.map(function(cell) { return cell.available? (+cell[usage.metric] || 0):0; });
+   var max = Math.max.apply(null, values.concat([1]));
+   var hours = '<span></span>';
+   for (var h = 0; h < 24; h++) hours += '<span>'+ String(h).padStart(2, '0') +'</span>';
+   w3_innerHTML('id-usage-heatmap-hours', hours);
+
+   var rows = '';
+   for (var day = 0; day < 7; day++) {
+      var dayCells = cells.slice(day * 24, day * 24 + 24);
+      var first = dayCells[0];
+      var label = first? new Date(first.start * 1000).toISOString().slice(5, 10): '--';
+      rows += '<div class="ui-usage-heatmap-row"><span class="ui-usage-day-label">'+ label +'</span>';
+      dayCells.forEach(function(cell) {
+         var value = cell.available? (+cell[usage.metric] || 0):0;
+         var level = cell.available? Math.max(0.08, value / max):0;
+         var dt = new Date(cell.start * 1000).toISOString().slice(0, 13) +':00 UTC';
+         var title = dt +' | '+ value.toFixed(usage.metric == 'listener_minutes'? 1:0) +' '+ usage.metric.replace('_', ' ') +
+            ' | peak '+ (+cell.peak || 0);
+         rows += '<button class="ui-usage-heat-cell'+ (cell.partial? ' is-partial':'') +
+            (cell.available? '':' is-unavailable') +'" style="--usage-level:'+ level.toFixed(3) +'" ' +
+            'title="'+ title +'" aria-label="'+ title +'" onclick="usage_heatmap_click('+ cell.start +')">' +
+            '<span>'+ (cell.available? (usage.metric == 'listener_minutes'? value.toFixed(0):value):'') +'</span></button>';
+      });
+      rows += '</div>';
+   }
+   w3_innerHTML('id-usage-heatmap', rows);
+}
+
+function usage_heatmap_click(epoch)
+{
+   usage.selected_epoch = epoch;
+   var d = new Date(epoch * 1000);
+   var date = d.toISOString().slice(0, 10);
+   var hour = d.getUTCHours();
+   ext_send('SET usage_day date='+ date);
+   ext_send('SET usage_hour date='+ date +' hour='+ hour);
+   ext_send('SET usage_recent date='+ date +' page=0 limit=50');
+}
+
+function usage_bar_chart(items, valueKey, labelFn)
+{
+   if (!items || !items.length) return '<div class="ui-usage-empty">No activity recorded</div>';
+   var max = Math.max.apply(null, items.map(function(item) { return +item[valueKey] || 0; }).concat([1]));
+   return '<div class="ui-usage-bars">'+ items.map(function(item) {
+      var value = +item[valueKey] || 0;
+      return '<div class="ui-usage-bar-row"><span>'+ labelFn(item) +'</span>' +
+         '<div><i style="width:'+ (value / max * 100).toFixed(1) +'%"></i></div>' +
+         '<strong>'+ (valueKey == 'seconds'? usage_duration(value):value.toFixed(1)) +'</strong></div>';
+   }).join('') +'</div>';
+}
+
+function usage_day_cb(o)
+{
+   var hours = (o.hours || []).map(function(item) {
+      return { label: String(item.hour).padStart(2, '0'), value: item.available? item.listener_minutes:0, partial:item.partial };
+   });
+   w3_innerHTML('id-usage-day',
+      '<h4>'+ o.date +' UTC listener minutes</h4>' +
+      usage_bar_chart(hours, 'value', function(item) { return item.label +':00'+ (item.partial? ' *':''); })
+   );
+}
+
+function usage_hour_cb(o)
+{
+   if (o.available === false || o.error) {
+      w3_innerHTML('id-usage-hour', '<div class="ui-usage-empty">No hourly report available</div>');
+      return;
+   }
+   var avg = o.concurrency_samples? o.concurrency_sum / o.concurrency_samples:0;
+   var html = '<div class="ui-usage-hour-summary">' +
+      '<strong>'+ usage_duration(o.listener_seconds) +'</strong><span>listener time</span>' +
+      '<strong>'+ (+o.sessions || 0) +'</strong><span>sessions</span>' +
+      '<strong>'+ (+o.unique_estimate || 0) +'</strong><span>estimated unique</span>' +
+      '<strong>'+ avg.toFixed(2) +'</strong><span>average concurrent</span></div>';
+   var freq = (o.frequencies || []).sort(function(a,b) { return b.seconds - a.seconds; }).slice(0, 12);
+   var exts = (o.extensions || []).sort(function(a,b) { return b.seconds - a.seconds; }).slice(0, 10);
+   var geo = (o.geography || []).sort(function(a,b) { return b.seconds - a.seconds; }).slice(0, 10);
+   html += '<h4>Top frequencies</h4>' +
+      usage_bar_chart(freq, 'seconds', function(item) { return item.khz +' kHz '+ item.mode; }) +
+      '<h4>Extensions</h4>' +
+      usage_bar_chart(exts, 'seconds', function(item) { return item.name; }) +
+      '<h4>Country / region</h4>' +
+      usage_bar_chart(geo, 'seconds', function(item) { return item.label; });
+   if (o.frequency_overflow || o.geography_overflow)
+      html += '<p class="ui-usage-overflow">Bounded aggregate overflow: frequency '+ (+o.frequency_overflow || 0) +
+         ', geography '+ (+o.geography_overflow || 0) +'.</p>';
+   w3_innerHTML('id-usage-hour', html);
+}
+
+function usage_recent_cb(o)
+{
+   var sessions = o.sessions || [];
+   if (!sessions.length) {
+      w3_innerHTML('id-usage-recent', '<div class="ui-usage-empty">No completed sessions for this date</div>');
+      return;
+   }
+   var html = '<div class="ui-usage-table-wrap"><table class="ui-usage-table"><thead><tr>' +
+      '<th>Start UTC</th><th>Duration</th><th>Visitor hash</th><th>Callsign</th><th>Country / region</th><th>Client</th>' +
+      '<th>Start</th><th>End</th></tr></thead><tbody>';
+   sessions.forEach(function(s) {
+      html += '<tr><td>'+ new Date(s.start * 1000).toISOString().replace('T', ' ').slice(0, 19) +'</td>' +
+         '<td>'+ usage_duration(s.duration) +'</td><td><code>'+ s.visitor_hash +'</code></td>' +
+         '<td>'+ (s.callsign || '-') +'</td><td>'+ (s.geo || 'Unknown') +'</td><td>'+ s.client +'</td>' +
+         '<td>'+ s.start_khz +' kHz '+ s.start_mode +'</td><td>'+ s.end_khz +' kHz '+ s.end_mode +'</td></tr>';
+   });
+   html += '</tbody></table></div>';
+   w3_innerHTML('id-usage-recent', html);
+}
+
 function kiwi_ws_open(conn_type, cb, cbp)
 {
 	return open_websocket(conn_type, cb, cbp, admin_msg, admin_recv, null, admin_close);
@@ -3216,6 +3454,7 @@ function admin_draw(sdr_mode)
 	if (!sdr_mode) s += w3_nav(admin_colors[ci++], 'GPS', 'gps', 'admin_nav');
 	s +=
       w3_nav(admin_colors[ci++], 'Status', 'status', 'admin_nav') +
+      (sdr_mode? w3_nav(admin_colors[ci++], 'Usage', 'usage', 'admin_nav') : '') +
       w3_nav(admin_colors[ci++], 'Control', 'control', 'admin_nav') +
       w3_nav(admin_colors[ci++], 'Connect', 'connect', 'admin_nav');
 	if (sdr_mode)
@@ -3276,7 +3515,7 @@ function admin_draw(sdr_mode)
 	modern_ui_mount('id-admin-theme-actions');
 	
 	if (sdr_mode)
-	   s = status_html();
+	   s = status_html() + usage_html();
 	else
 	   s = gps_html() + status_html();
 
@@ -3304,7 +3543,7 @@ function admin_draw(sdr_mode)
 	ael.innerHTML += s;
 	ael.classList.add('ui-admin-shell');
 	[
-	   'status', 'control', 'connect', 'config', 'webpage', 'sdr_hu', 'dx',
+	   'status', 'usage', 'control', 'connect', 'config', 'webpage', 'sdr_hu', 'dx',
 	   'update', 'network', 'gps', 'log', 'console', 'extensions', 'security'
 	].forEach(function(id) {
 	   var section = w3_el(id);
@@ -3528,6 +3767,39 @@ function admin_recv(data)
 			case "admin_update":
 				admin_update(param[1]);
 				break;
+
+			case "usage_summary":
+			   usage_summary_cb(kiwi_JSON_parse('usage_summary', decodeURIComponent(param[1])) || {});
+			   break;
+
+			case "usage_heatmap":
+			   usage_heatmap_cb(kiwi_JSON_parse('usage_heatmap', decodeURIComponent(param[1])) || {});
+			   break;
+
+			case "usage_day":
+			   usage_day_cb(kiwi_JSON_parse('usage_day', decodeURIComponent(param[1])) || {});
+			   break;
+
+			case "usage_hour":
+			   usage_hour_cb(kiwi_JSON_parse('usage_hour', decodeURIComponent(param[1])) || {});
+			   break;
+
+			case "usage_recent":
+			   usage_recent_cb(kiwi_JSON_parse('usage_recent', decodeURIComponent(param[1])) || {});
+			   break;
+
+			case "usage_enabled":
+			   var usageEnabled = w3_el('id-usage-enabled');
+			   if (usageEnabled) usageEnabled.checked = !!+param[1];
+			   usage_refresh();
+			   break;
+
+			case "usage_delete":
+			   var usageDelete = kiwi_JSON_parse('usage_delete', decodeURIComponent(param[1])) || {};
+			   w3_innerHTML('id-usage-status', usageDelete.ok?
+			      'Usage reports deleted and visitor key reset.' : 'Usage data deletion failed.');
+			   usage_refresh();
+			   break;
 
 			case "auto_nat":
 				var p = +param[1];
