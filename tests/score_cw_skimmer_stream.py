@@ -49,7 +49,13 @@ def edit_distance(expected, actual):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--replay", required=True)
-    parser.add_argument("--corpus", required=True)
+    parser.add_argument(
+        "--corpus",
+        default=os.path.join(os.path.dirname(__file__), "fixtures", "cw"),
+    )
+    parser.add_argument("--max-cer", type=float, default=0.10)
+    parser.add_argument("--max-false-tracks", type=int, default=0)
+    parser.add_argument("--max-latency", type=float, default=5.0)
     args = parser.parse_args()
 
     total_distance = 0
@@ -125,6 +131,11 @@ def main():
         f"TOTAL exact={exact}/12 edit={total_distance}/{total_characters} "
         f"CER={total_distance / total_characters:.3f} "
         f"false_tracks={false_tracks} average_latency={averageLatency:.2f}s"
+    )
+    return int(
+        total_distance / total_characters > args.max_cer or
+        false_tracks > args.max_false_tracks or
+        averageLatency > args.max_latency
     )
 
 

@@ -331,6 +331,14 @@ if(NATIVE_HARNESS)
         COMMAND test_cw_skimmer_replay
             "${UPSTREAM_DIR}/unix_env/kiwi.config/samples/CW.test.au"
     )
+    find_program(PYTHON3_COMMAND NAMES python3 REQUIRED)
+    add_test(
+        NAME cw_skimmer_stream_corpus
+        COMMAND ${PYTHON3_COMMAND}
+            "${UPSTREAM_DIR}/tests/score_cw_skimmer_stream.py"
+            --replay $<TARGET_FILE:test_cw_skimmer_replay>
+            --corpus "${UPSTREAM_DIR}/tests/fixtures/cw"
+    )
 
     add_executable(test_bayes_hsmm
         tests/test_bayes_hsmm.cpp
