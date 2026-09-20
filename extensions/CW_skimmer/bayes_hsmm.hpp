@@ -1,0 +1,253 @@
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+class BayesHsmm {
+public:
+    enum {
+        TICK_MS = 5,
+        MAX_TICKS = 2400,
+        MAX_SEGMENTS = 512,
+        MAX_OUTPUT = 128
+    };
+
+    explicit BayesHsmm(double wpm, double minimumConfidence = 0.0) :
+        ditTicks(1200.0 / (wpm < 15.0 ? 15.0 : wpm) / TICK_MS),
+        spacingScale(wpm < 15.0 ? (50.0 * 15.0 / wpm - 31.0) / 19.0 : 1.0),
+        minimumConfidence(minimumConfidence)
+    {}
+
+    int decode(const double* envelope, int count, char* output, int outputSize) const
+    {
+        if (!envelope || count < 2 || count > MAX_TICKS || !output || outputSize < 2)
+            return 0;
+
+        double ordered[MAX_TICKS];
+        std::memcpy(ordered, envelope, count * sizeof(ordered[0]));
+        std::sort(ordered, ordered + count);
+        int noiseCount = std::max(2, count * 3 / 10);
+        double noiseMean = mean(ordered, noiseCount);
+        double noiseVariance = variance(ordered, noiseCount, noiseMean) +
+            maximum(1.0, noiseMean * noiseMean * 0.02);
+        int markStart = count * 4 / 5;
+        double markMean = mean(ordered + markStart, count - markStart);
+        double markVariance = variance(ordered + markStart, count - markStart, markMean) +
+            maximum(1.0, markMean * markMean * 0.05);
+        int prefixCount = std::min(count, 150);
+        double prefixMean = mean(envelope, prefixCount);
+        double prefixVariance = variance(envelope, prefixCount, prefixMean);
+        double levelRange = markMean - noiseMean;
+        if (prefixMean - noiseMean < 0.2 * levelRange &&
+            std::sqrt(prefixVariance) < 0.2 * levelRange) {
+            noiseMean = prefixMean;
+            noiseVariance = prefixVariance +
+                maximum(1.0, noiseMean * noiseMean * 0.02);
+        }
+        double emissionVariance = maximum(noiseVariance, markVariance);
+
+        double activeThreshold = noiseMean + 3.0 * std::sqrt(noiseVariance);
+        int first = 0;
+        while (first < count && envelope[first] < activeThreshold) first++;
+        int last = count - 1;
+        while (last > first && envelope[last] < activeThreshold) last--;
+        if (first == count) {
+            output[0] = '\0';
+            return 0;
+        }
+        int activeCount = last - first + 1;
+
+        double prefix[2][MAX_TICKS + 1];
+        prefix[0][0] = prefix[1][0] = 0.0;
+        for (int i = 0; i < activeCount; ++i) {
+            double value = envelope[first + i];
+            prefix[0][i + 1] = prefix[0][i] +
+                logLikelihood(value, noiseMean, emissionVariance);
+            prefix[1][i + 1] = prefix[1][i] +
+                logLikelihood(value, markMean, emissionVariance);
+        }
+
+        const double invalid = -1e30;
+        double score[2][MAX_TICKS];
+        short previousEnd[2][MAX_TICKS];
+        unsigned short selectedDuration[2][MAX_TICKS];
+        int minimumDuration = std::max(1, (int) (0.35 * ditTicks));
+
+        for (int end = 0; end < activeCount; ++end) {
+            for (int state = 0; state < 2; ++state) {
+                score[state][end] = invalid;
+                previousEnd[state][end] = -1;
+                selectedDuration[state][end] = 0;
+                int maximumDuration = std::max(minimumDuration,
+                    (int) ((state ? 5.0 : 9.0 * spacingScale) * ditTicks));
+                int limit = std::min(end + 1, maximumDuration);
+                for (int duration = minimumDuration; duration <= limit; ++duration) {
+                    int start = end - duration + 1;
+                    double prior;
+                    if (start == 0)
+                        prior = 0.0;
+                    else
+                        prior = score[1 - state][start - 1];
+                    double candidate = prior +
+                        prefix[state][end + 1] - prefix[state][start] +
+                        durationScore(state, duration);
+                    if (candidate > score[state][end]) {
+                        score[state][end] = candidate;
+                        previousEnd[state][end] = (short) (start - 1);
+                        selectedDuration[state][end] = (unsigned short) duration;
+                    }
+                }
+            }
+        }
+
+        double nullMean = mean(envelope + first, activeCount);
+        double nullVariance = variance(envelope + first, activeCount, nullMean) +
+            maximum(1.0, nullMean * nullMean * 0.02);
+        double nullScore = 0.0;
+        for (int i = 0; i < activeCount; ++i)
+            nullScore += logLikelihood(envelope[first + i], nullMean, nullVariance);
+        double pathScore = maximum(score[0][activeCount - 1],
+            score[1][activeCount - 1]);
+        if ((pathScore - nullScore) / activeCount < 0.3) {
+            output[0] = '\0';
+            return 0;
+        }
+
+        Segment segments[MAX_SEGMENTS];
+        int segmentCount = 0;
+        int state = score[0][activeCount - 1] > score[1][activeCount - 1] ? 0 : 1;
+        int end = activeCount - 1;
+        while (end >= 0 && segmentCount < MAX_SEGMENTS) {
+            int duration = selectedDuration[state][end];
+            if (duration == 0) break;
+            int start = end - duration + 1;
+            double selected = prefix[state][end + 1] - prefix[state][start];
+            double alternate = prefix[1 - state][end + 1] - prefix[1 - state][start];
+            segments[segmentCount++] = { state, duration, selected - alternate };
+            end = previousEnd[state][end];
+            state = 1 - state;
+        }
+
+        char symbols[10];
+        int symbolCount = 0;
+        double characterEvidence = 0.0;
+        int characterTicks = 0;
+        int written = 0;
+        for (int i = segmentCount - 1; i >= 0; --i) {
+            double units = segments[i].duration / ditTicks;
+            if (segments[i].state) {
+                if (symbolCount < (int) sizeof(symbols) - 1)
+                    symbols[symbolCount++] =
+                        std::fabs(units - 1.0) < std::fabs(units - 3.0) ? '.' : '-';
+                characterEvidence += segments[i].evidence;
+                characterTicks += segments[i].duration;
+            } else if (units >= 2.2 && symbolCount != 0) {
+                symbols[symbolCount] = '\0';
+                if (characterTicks != 0 &&
+                    characterEvidence / characterTicks >= minimumConfidence)
+                    append(output, outputSize, written, lookup(symbols));
+                symbolCount = 0;
+                characterEvidence = 0.0;
+                characterTicks = 0;
+                if (units >= 5.5) append(output, outputSize, written, ' ');
+            } else if (symbolCount != 0) {
+                characterEvidence += segments[i].evidence;
+                characterTicks += segments[i].duration;
+            }
+        }
+        if (symbolCount != 0) {
+            symbols[symbolCount] = '\0';
+            if (characterTicks != 0 &&
+                characterEvidence / characterTicks >= minimumConfidence)
+                append(output, outputSize, written, lookup(symbols));
+        }
+        output[written] = '\0';
+        return written;
+    }
+
+private:
+    struct Segment {
+        int state;
+        int duration;
+        double evidence;
+    };
+
+    double ditTicks;
+    double spacingScale;
+    double minimumConfidence;
+
+    static double maximum(double a, double b) { return a > b ? a : b; }
+
+    static double mean(const double* values, int count)
+    {
+        double total = 0.0;
+        for (int i = 0; i < count; ++i) total += values[i];
+        return total / count;
+    }
+
+    static double variance(const double* values, int count, double average)
+    {
+        double total = 0.0;
+        for (int i = 0; i < count; ++i) {
+            double delta = values[i] - average;
+            total += delta * delta;
+        }
+        return total / count;
+    }
+
+    static double logLikelihood(double value, double average, double variance)
+    {
+        double delta = value - average;
+        return -0.5 * (delta * delta / variance + std::log(variance));
+    }
+
+    double durationScore(int state, int duration) const
+    {
+        static const double ratios[2][3] = {
+            { 1.0, 3.0, 7.0 },
+            { 1.0, 3.0, 0.0 }
+        };
+        static const double weights[2][3] = {
+            { 0.50, 0.35, 0.15 },
+            { 0.65, 0.35, 0.0 }
+        };
+        int choices = state ? 2 : 3;
+        double best = -1e30;
+        for (int i = 0; i < choices; ++i) {
+            double ratio = ratios[state][i];
+            if (!state && i != 0) ratio *= spacingScale;
+            double sigma = maximum(1.0, ratio * ditTicks * 0.35);
+            double z = (duration - ratio * ditTicks) / sigma;
+            best = std::max(best, std::log(weights[state][i]) - 0.5 * z * z);
+        }
+        return best;
+    }
+
+    static void append(char* output, int outputSize, int& written, char value)
+    {
+        if (written + 1 < outputSize) output[written++] = value;
+    }
+
+    static char lookup(const char* symbols)
+    {
+        static const struct {
+            const char* symbols;
+            char value;
+        } table[] = {
+            { ".-", 'A' }, { "-...", 'B' }, { "-.-.", 'C' }, { "-..", 'D' },
+            { ".", 'E' }, { "..-.", 'F' }, { "--.", 'G' }, { "....", 'H' },
+            { "..", 'I' }, { ".---", 'J' }, { "-.-", 'K' }, { ".-..", 'L' },
+            { "--", 'M' }, { "-.", 'N' }, { "---", 'O' }, { ".--.", 'P' },
+            { "--.-", 'Q' }, { ".-.", 'R' }, { "...", 'S' }, { "-", 'T' },
+            { "..-", 'U' }, { "...-", 'V' }, { ".--", 'W' }, { "-..-", 'X' },
+            { "-.--", 'Y' }, { "--..", 'Z' }, { "-----", '0' },
+            { ".----", '1' }, { "..---", '2' }, { "...--", '3' },
+            { "....-", '4' }, { ".....", '5' }, { "-....", '6' },
+            { "--...", '7' }, { "---..", '8' }, { "----.", '9' }
+        };
+        for (unsigned int i = 0; i < sizeof(table) / sizeof(table[0]); ++i)
+            if (std::strcmp(symbols, table[i].symbols) == 0) return table[i].value;
+        return '?';
+    }
+};

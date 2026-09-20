@@ -319,6 +319,11 @@ if(NATIVE_HARNESS)
             "${UPSTREAM_DIR}/unix_env/kiwi.config/samples/CW.test.au"
     )
 
+    add_executable(test_bayes_hsmm
+        tests/test_bayes_hsmm.cpp
+    )
+    target_include_directories(test_bayes_hsmm PRIVATE "${UPSTREAM_DIR}")
+
     find_program(NODE_COMMAND NAMES node REQUIRED)
     add_test(
         NAME native_mqtt
