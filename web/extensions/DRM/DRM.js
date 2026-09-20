@@ -1128,17 +1128,6 @@ function drm_mobile_controls_setup(mobile)
 	ext_set_controls_width_height(drm.w_sched + drm.cpanel_margin, drm.h_sched + drm.cpanel_margin);
 	drm_database_cb('drm.database', 0, true);
 
-   // in mobile mode close button just closes panel but keeps DRM running
-	var el = w3_el('id-ext-controls-close');
-      console.log('DRM mobile setup panelShown='+ w3_el('id-ext-controls').panelShown);
-
-	el.onclick = function() {
-	   toggle_panel("ext-controls", 0);
-	   //extint_panel_hide();
-      console.log('DRM mobile ext-controls-close panelShown='+ w3_el('id-ext-controls').panelShown);
-	};
-
-   w3_create_attribute('id-ext-controls-close-img', 'src', 'icons/close.24.png');
    drm.last_mobile = {};   // force rescale first time
    drm.rescale_cnt = drm.rescale_cnt2 = 0;
    drm.fit = '';
