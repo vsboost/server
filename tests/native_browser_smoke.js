@@ -1,8 +1,52 @@
 const { chromium } = require('playwright');
+const fs = require('fs');
 const http = require('http');
+const path = require('path');
 const zlib = require('zlib');
 
 const baseUrl = process.env.WEBSDR_HARNESS_URL || 'http://127.0.0.1:8073/';
+
+function auditExtensionPanels() {
+    const expected = [
+        'ACARS', 'AIS', 'ALE_2G', 'CW_decoder', 'CW_skimmer', 'DRM', 'FAX', 'FFT',
+        'FSK', 'FT8', 'HFDL', 'IBP_scan', 'IQ_display', 'Loran_C', 'NAVTEX', 'SSTV',
+        'S_meter', 'TDoA', 'ant_switch', 'colormap', 'devl', 'digi_modes', 'example',
+        'iframe', 'noise_blank', 'noise_filter', 'prefs', 's4285', 'space_weather',
+        'timecode', 'waterfall', 'wspr'
+    ].sort((a, b) => a.localeCompare(b));
+    const extensionRoot = path.resolve(__dirname, '../web/extensions');
+    const entries = [];
+
+    for (const directory of fs.readdirSync(extensionRoot, { withFileTypes: true })) {
+        if (!directory.isDirectory())
+            continue;
+        for (const file of fs.readdirSync(path.join(extensionRoot, directory.name))) {
+            if (!file.endsWith('.js'))
+                continue;
+            const filePath = path.join(extensionRoot, directory.name, file);
+            const source = fs.readFileSync(filePath, 'utf8');
+            const main = source.match(/^\s*function\s+([A-Za-z0-9_]+)_main\s*\(/m);
+            if (!main)
+                continue;
+            entries.push({
+                name: main[1],
+                file: path.relative(path.resolve(__dirname, '..'), filePath),
+                sharedPanel: source.includes('ext_panel_show(')
+            });
+        }
+    }
+
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    const extSource = fs.readFileSync(path.join(extensionRoot, 'ext.js'), 'utf8');
+    const drmSource = fs.readFileSync(path.join(extensionRoot, 'DRM/DRM.js'), 'utf8');
+    return {
+        expected,
+        entries,
+        allShared: entries.every(entry => entry.sharedPanel),
+        antSwitchRfTab: /use_rf_tab:\s*\[\s*'ant_switch'\s*\]/.test(extSource),
+        drmCloseOverride: /id-ext-controls-close|toggle_panel\([\"']ext-controls/.test(drmSource)
+    };
+}
 
 function fetchRawResponse(headers, path) {
     const url = new URL(baseUrl);
@@ -27,6 +71,14 @@ function fetchRawResponse(headers, path) {
 }
 
 (async () => {
+    const extensionPanelAudit = auditExtensionPanels();
+    if (JSON.stringify(extensionPanelAudit.entries.map(entry => entry.name)) !==
+            JSON.stringify(extensionPanelAudit.expected) ||
+        !extensionPanelAudit.allShared ||
+        !extensionPanelAudit.antSwitchRfTab ||
+        extensionPanelAudit.drmCloseOverride)
+        throw new Error(`invalid extension panel source audit: ${JSON.stringify(extensionPanelAudit)}`);
+
     const browser = await chromium.launch({
         headless: true,
         args: ['--autoplay-policy=no-user-gesture-required']
@@ -183,7 +235,50 @@ function fetchRawResponse(headers, path) {
             await targetPage.waitForTimeout(100);
         }
 
-        return targetPage.evaluate(extensionName => {
+        const collapseSnapshot = () => targetPage.evaluate(() => {
+            const panel = document.getElementById('id-ext-controls');
+            const button = document.getElementById('id-ext-controls-collapse-btn');
+            const content = document.querySelector('.id-ext-controls-container');
+            const close = document.getElementById('id-ext-controls-close');
+            const panelRect = panel.getBoundingClientRect();
+            const buttonRect = button.getBoundingClientRect();
+            const hit = document.elementFromPoint(
+                buttonRect.left + buttonRect.width / 2,
+                buttonRect.top + buttonRect.height / 2);
+            return {
+                collapsed: panel.classList.contains('ui-extension-collapsed'),
+                state: extint.panel_collapsed,
+                displayed: extint.displayed,
+                currentExtension: extint.current_ext_name,
+                viewportHeight: window.innerHeight,
+                panelTop: Math.round(panelRect.top),
+                panelBottom: Math.round(panelRect.bottom),
+                handle: {
+                    left: Math.round(buttonRect.left),
+                    top: Math.round(buttonRect.top),
+                    right: Math.round(buttonRect.right),
+                    bottom: Math.round(buttonRect.bottom),
+                    width: Math.round(buttonRect.width),
+                    height: Math.round(buttonRect.height),
+                    tappable: hit === button || button.contains(hit)
+                },
+                ariaExpanded: button.getAttribute('aria-expanded'),
+                label: button.getAttribute('aria-label'),
+                icon: document.getElementById('id-ext-controls-collapse-icon').className,
+                contentVisibility: getComputedStyle(content).visibility,
+                contentAriaHidden: content.getAttribute('aria-hidden'),
+                closeVisibility: getComputedStyle(close).visibility
+            };
+        });
+        const collapse = { expanded: await collapseSnapshot() };
+        await targetPage.locator('#id-ext-controls-collapse-btn').click();
+        await targetPage.waitForTimeout(250);
+        collapse.collapsed = await collapseSnapshot();
+        await targetPage.locator('#id-ext-controls-collapse-btn').click();
+        await targetPage.waitForTimeout(250);
+        collapse.restored = await collapseSnapshot();
+
+        const layout = await targetPage.evaluate(extensionName => {
             const root = document.querySelector('.id-ext-controls-container');
             const visible = element => {
                 const style = getComputedStyle(element);
@@ -255,6 +350,8 @@ function fetchRawResponse(headers, path) {
                         document.querySelector('.id-ais-list')?.textContent.includes('TEST VESSEL'))
             };
         }, name);
+        layout.collapse = collapse;
+        return layout;
     }
 
     async function dxDialogLayoutState(targetPage, viewport) {
@@ -1004,12 +1101,13 @@ function fetchRawResponse(headers, path) {
             return themes;
         });
         const drmThemeAssets = await page.evaluate(async () => {
-            const [script, stylesheet] = await Promise.all([
+            const [script, stylesheet, sharedExtensionScript] = await Promise.all([
                 fetch('extensions/DRM/DRM.js').then(response => response.text()),
-                fetch('extensions/DRM/DRM.css').then(response => response.text())
+                fetch('extensions/DRM/DRM.css').then(response => response.text()),
+                fetch('extensions/ext.js').then(response => response.text())
             ]);
             return {
-                lightCloseIcon: script.includes("icons/close.24.png") &&
+                lightCloseIcon: sharedExtensionScript.includes("icons/close.24.png") &&
                     !script.includes("icons/close.black.24.png"),
                 themedScheduleMarker:
                     stylesheet.includes('background-color: var(--ui-border-strong)') &&
@@ -1066,6 +1164,8 @@ function fetchRawResponse(headers, path) {
             const viewportWidth = window.innerWidth;
             const panel = document.getElementById('id-ext-controls').getBoundingClientRect();
             const close = document.getElementById('id-ext-controls-close').getBoundingClientRect();
+            const collapse = document.getElementById(
+                'id-ext-controls-collapse-btn').getBoundingClientRect();
             const data = document.querySelector('.id-fax-data');
             const dataRect = data.getBoundingClientRect();
             const actionRows = Array.from(
@@ -1074,6 +1174,12 @@ function fetchRawResponse(headers, path) {
                 documentOverflow: document.documentElement.scrollWidth > viewportWidth + 1,
                 panel: { left: panel.left, right: panel.right, width: panel.width },
                 close: { left: close.left, right: close.right, width: close.width, height: close.height },
+                collapse: {
+                    left: collapse.left,
+                    right: collapse.right,
+                    width: collapse.width,
+                    height: collapse.height
+                },
                 data: {
                     left: dataRect.left,
                     right: dataRect.right,
@@ -1081,6 +1187,59 @@ function fetchRawResponse(headers, path) {
                     overflowX: getComputedStyle(data).overflowX
                 },
                 actionOverflow: actionRows.some(row => row.scrollWidth > row.clientWidth + 1)
+            };
+        });
+        await page.locator('#id-ext-controls-collapse-btn').click();
+        await page.waitForTimeout(250);
+        const faxCollapse = {
+            collapsed: await page.evaluate(() => {
+                const panel = document.getElementById('id-ext-controls');
+                const panelRect = panel.getBoundingClientRect();
+                const button = document.getElementById('id-ext-controls-collapse-btn');
+                const buttonRect = button.getBoundingClientRect();
+                const data = document.querySelector('.id-fax-data');
+                const dataRect = data.getBoundingClientRect();
+                const content = document.querySelector('.id-ext-controls-container');
+                const dataContainer = document.getElementById('id-ext-data-container');
+                const hit = document.elementFromPoint(
+                    buttonRect.left + buttonRect.width / 2,
+                    buttonRect.top + buttonRect.height / 2);
+                return {
+                    state: extint.panel_collapsed,
+                    displayed: extint.displayed,
+                    currentExtension: extint.current_ext_name,
+                    selectedExtension: w3_el('id-select-ext').value,
+                    panelTop: Math.round(panelRect.top),
+                    viewportHeight: window.innerHeight,
+                    handleVisible: buttonRect.top >= 0 &&
+                        buttonRect.bottom <= window.innerHeight &&
+                        (hit === button || button.contains(hit)),
+                    ariaExpanded: button.getAttribute('aria-expanded'),
+                    label: button.getAttribute('aria-label'),
+                    icon: document.getElementById(
+                        'id-ext-controls-collapse-icon').className,
+                    contentVisibility: content? getComputedStyle(content).visibility:'missing',
+                    dataVisible: !!dataContainer &&
+                        getComputedStyle(dataContainer).display !== 'none' &&
+                        dataRect.width > 1 && dataRect.height > 1
+                };
+            })
+        };
+        await page.evaluate(() => extint_open('SSTV'));
+        await page.waitForFunction(() => extint.current_ext_name === 'SSTV' &&
+            document.querySelector('.id-sstv-freq-menu'));
+        await page.waitForTimeout(250);
+        faxCollapse.resetOnOpen = await page.evaluate(() => {
+            const panel = document.getElementById('id-ext-controls');
+            const button = document.getElementById('id-ext-controls-collapse-btn');
+            return {
+                state: extint.panel_collapsed,
+                collapsed: panel.classList.contains('ui-extension-collapsed'),
+                ariaExpanded: button.getAttribute('aria-expanded'),
+                label: button.getAttribute('aria-label'),
+                icon: document.getElementById('id-ext-controls-collapse-icon').className,
+                contentVisibility: getComputedStyle(
+                    document.querySelector('.id-ext-controls-container')).visibility
             };
         });
         await page.locator('#id-ext-controls-close').click();
@@ -1098,6 +1257,34 @@ function fetchRawResponse(headers, path) {
                     await extensionLayoutState(page, extension, viewport));
         }
         await page.locator('#id-ext-controls-close').click();
+
+        await page.evaluate(() => extint_open('DRM'));
+        await page.waitForFunction(() => extint.current_ext_name === 'DRM' &&
+            !!document.querySelector('.id-drm-controls, .id-drm-panel-container'));
+        await page.waitForTimeout(1000);
+        await page.locator('#id-ext-controls-collapse-btn').click();
+        await page.waitForTimeout(250);
+        const drmPanelControls = {
+            collapsed: await page.evaluate(() => ({
+                state: extint.panel_collapsed,
+                displayed: extint.displayed,
+                currentExtension: extint.current_ext_name,
+                panelVisible: getComputedStyle(
+                    document.getElementById('id-ext-controls')).visibility
+            }))
+        };
+        await page.locator('#id-ext-controls-collapse-btn').click();
+        await page.waitForTimeout(250);
+        await page.locator('#id-ext-controls-close').click();
+        await page.waitForTimeout(100);
+        drmPanelControls.closed = await page.evaluate(() => ({
+            state: extint.panel_collapsed,
+            displayed: extint.displayed,
+            currentExtension: extint.current_ext_name,
+            panelVisible: getComputedStyle(
+                document.getElementById('id-ext-controls')).visibility,
+            selectedExtension: w3_el('id-select-ext').value
+        }));
 
         const dxDialogMobile = [];
         for (const theme of ['midnight', 'classic']) {
@@ -2107,13 +2294,76 @@ function fetchRawResponse(headers, path) {
             faxMobile.panel.left < -1 || faxMobile.panel.right > 391 ||
             faxMobile.close.left < -1 || faxMobile.close.right > 391 ||
             faxMobile.close.width < 32 || faxMobile.close.height < 32 ||
+            faxMobile.collapse.left < -1 || faxMobile.collapse.right > 391 ||
+            faxMobile.collapse.width < 44 || faxMobile.collapse.height < 34 ||
             faxMobile.data.left < -1 || faxMobile.data.right > 391 ||
             faxMobile.data.overflowX !== 'auto' ||
             faxMobile.actionOverflow)
             throw new Error(`invalid FAX mobile layout: ${JSON.stringify(faxMobile)}`);
+        if (!faxCollapse.collapsed.state ||
+            !faxCollapse.collapsed.displayed ||
+            faxCollapse.collapsed.currentExtension !== 'FAX' ||
+            faxCollapse.collapsed.panelTop < faxCollapse.collapsed.viewportHeight - 12 ||
+            !faxCollapse.collapsed.handleVisible ||
+            faxCollapse.collapsed.ariaExpanded !== 'false' ||
+            faxCollapse.collapsed.label !== 'Expand extension controls' ||
+            !faxCollapse.collapsed.icon.includes('fa-chevron-up') ||
+            faxCollapse.collapsed.contentVisibility !== 'hidden' ||
+            !faxCollapse.collapsed.dataVisible ||
+            faxCollapse.resetOnOpen.state ||
+            faxCollapse.resetOnOpen.collapsed ||
+            faxCollapse.resetOnOpen.ariaExpanded !== 'true' ||
+            faxCollapse.resetOnOpen.label !== 'Collapse extension controls' ||
+            !faxCollapse.resetOnOpen.icon.includes('fa-chevron-down') ||
+            faxCollapse.resetOnOpen.contentVisibility !== 'visible')
+            throw new Error(`invalid FAX panel collapse: ${JSON.stringify(faxCollapse)}`);
+        const invalidExtensionCollapse = layout => {
+            const collapse = layout.collapse;
+            const validHandle = snapshot =>
+                snapshot.handle.left >= -1 &&
+                snapshot.handle.right <= layout.viewport[0] + 1 &&
+                snapshot.handle.top >= -1 &&
+                snapshot.handle.bottom <= snapshot.viewportHeight + 1 &&
+                snapshot.handle.width >= 44 &&
+                snapshot.handle.height >= 34 &&
+                snapshot.handle.tappable;
+            return collapse.expanded.collapsed ||
+                collapse.expanded.state ||
+                !collapse.expanded.displayed ||
+                collapse.expanded.currentExtension !== layout.name ||
+                collapse.expanded.ariaExpanded !== 'true' ||
+                collapse.expanded.label !== 'Collapse extension controls' ||
+                !collapse.expanded.icon.includes('fa-chevron-down') ||
+                collapse.expanded.contentVisibility !== 'visible' ||
+                collapse.expanded.contentAriaHidden !== 'false' ||
+                !validHandle(collapse.expanded) ||
+                !collapse.collapsed.collapsed ||
+                !collapse.collapsed.state ||
+                !collapse.collapsed.displayed ||
+                collapse.collapsed.currentExtension !== layout.name ||
+                collapse.collapsed.panelTop < collapse.collapsed.viewportHeight - 12 ||
+                collapse.collapsed.ariaExpanded !== 'false' ||
+                collapse.collapsed.label !== 'Expand extension controls' ||
+                !collapse.collapsed.icon.includes('fa-chevron-up') ||
+                collapse.collapsed.contentVisibility !== 'hidden' ||
+                collapse.collapsed.contentAriaHidden !== 'true' ||
+                collapse.collapsed.closeVisibility !== 'hidden' ||
+                !validHandle(collapse.collapsed) ||
+                collapse.restored.collapsed ||
+                collapse.restored.state ||
+                !collapse.restored.displayed ||
+                collapse.restored.currentExtension !== layout.name ||
+                collapse.restored.ariaExpanded !== 'true' ||
+                collapse.restored.label !== 'Collapse extension controls' ||
+                !collapse.restored.icon.includes('fa-chevron-down') ||
+                collapse.restored.contentVisibility !== 'visible' ||
+                collapse.restored.contentAriaHidden !== 'false' ||
+                !validHandle(collapse.restored);
+        };
         if (extensionLayouts.some(layout =>
             layout.overlaps.length ||
             layout.overflowingHooks.length ||
+            invalidExtensionCollapse(layout) ||
             (layout.helpButton.visible &&
                 (layout.helpButton.height !== 30 ||
                     layout.helpButton.minHeight !== '30px' ||
@@ -2127,6 +2377,15 @@ function fetchRawResponse(headers, path) {
             !layout.aisVesselRendered))
             throw new Error(
                 `invalid extension control layout: ${JSON.stringify(extensionLayouts)}`);
+        if (!drmPanelControls.collapsed.state ||
+            !drmPanelControls.collapsed.displayed ||
+            drmPanelControls.collapsed.currentExtension !== 'DRM' ||
+            drmPanelControls.collapsed.panelVisible !== 'visible' ||
+            drmPanelControls.closed.state ||
+            drmPanelControls.closed.displayed ||
+            drmPanelControls.closed.currentExtension !== null ||
+            drmPanelControls.closed.panelVisible !== 'hidden')
+            throw new Error(`invalid DRM panel controls: ${JSON.stringify(drmPanelControls)}`);
         if (dxDialogMobile.some(layout =>
             layout.documentOverflow ||
             layout.formOverflow ||
@@ -2475,9 +2734,10 @@ function fetchRawResponse(headers, path) {
             throw new Error(errors.join('\n'));
 
         console.log(JSON.stringify({
-            ...state, uiFoundation, extensionThemes, drmThemeAssets, extensionFocus,
+            ...state, extensionPanelAudit, uiFoundation, extensionThemes, drmThemeAssets,
+            extensionFocus,
             cloudControlContrast,
-            receiverResponsive, faxMobile, extensionLayouts,
+            receiverResponsive, faxMobile, faxCollapse, extensionLayouts, drmPanelControls,
             panelToggle, adminFoundation, adminClassic, adminWarningThemes, adminResponsive,
             adminControl, adminConnect, adminConfig,
             adminWebpage, adminPublic, adminDX, adminUpdate, adminNetwork, adminGPS,
