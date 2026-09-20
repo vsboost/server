@@ -815,6 +815,30 @@ static std::string json_escape(const char* s)
     return out;
 }
 
+static bool valid_date(const char* date)
+{
+    if (!date || strlen(date) != 10) return false;
+    for (int i = 0; i < 10; i++) {
+        if (i == 4 || i == 7) {
+            if (date[i] != '-') return false;
+        } else if (date[i] < '0' || date[i] > '9') {
+            return false;
+        }
+    }
+    int year, month, day;
+    if (sscanf(date, "%d-%d-%d", &year, &month, &day) != 3) return false;
+    if (year < 2020 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+    struct tm tm;
+    memset(&tm, 0, sizeof(tm));
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    time_t t = timegm(&tm);
+    struct tm check;
+    gmtime_r(&t, &check);
+    return check.tm_year == tm.tm_year && check.tm_mon == tm.tm_mon && check.tm_mday == tm.tm_mday;
+}
+
 static void appendf(std::string& out, const char* fmt, ...)
 {
     char buf[512];
@@ -823,6 +847,30 @@ static void appendf(std::string& out, const char* fmt, ...)
     int n = vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     if (n > 0) out.append(buf, MIN(n, (int)sizeof(buf) - 1));
+}
+
+static bool remove_tree_contents(const std::string& path)
+{
+    DIR* dir = opendir(path.c_str());
+    if (!dir) return errno == ENOENT;
+    bool ok = true;
+    struct dirent* de;
+    while ((de = readdir(dir)) != NULL) {
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) continue;
+        std::string child = path + "/" + de->d_name;
+        struct stat st;
+        if (lstat(child.c_str(), &st) != 0) {
+            ok = false;
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            if (!remove_tree_contents(child) || rmdir(child.c_str()) != 0) ok = false;
+        } else if (unlink(child.c_str()) != 0) {
+            ok = false;
+        }
+    }
+    closedir(dir);
+    return ok;
 }
 
 }
@@ -919,9 +967,30 @@ void usage_stats_set_enabled(bool value)
     enabled = value;
 }
 
+bool usage_stats_delete_all()
+{
+    sd_write_guard guard;
+    bool ok = remove_tree_contents(usage_root());
+    if (!ok) {
+        set_error("delete usage data failed: %s", strerror(errno));
+        return false;
+    }
+    memset(&current_hour, 0, sizeof(current_hour));
+    memset(active, 0, sizeof(active));
+    identity_key_valid = false;
+    current_hour.hour_start = hour_floor(time(NULL));
+    load_or_create_key();
+    initialized = identity_key_valid;
+    return initialized;
+}
+
 char* usage_stats_heatmap_json(int days, const char* metric)
 {
     days = CLAMP(days, 1, 7);
+    if (!metric || (strcmp(metric, "listener_minutes") != 0 &&
+                    strcmp(metric, "sessions") != 0 &&
+                    strcmp(metric, "unique") != 0))
+        metric = "listener_minutes";
     s64_t now = time(NULL);
     s64_t current = hour_floor(now);
     s64_t start = current - (days * 24 - 1) * 3600LL;
@@ -977,14 +1046,41 @@ char* usage_stats_summary_json()
 
 char* usage_stats_day_json(const char* date)
 {
-    if (!date || strlen(date) != 10) return strdup("{\"error\":\"invalid date\"}");
+    if (!valid_date(date)) return strdup("{\"error\":\"invalid date\"}");
     std::string out = "{\"date\":\"" + json_escape(date) + "\",\"hours\":[";
     for (int h = 0; h < 24; h++) {
-        char path[256];
-        snprintf(path, sizeof(path), "%s/hourly/%s/%02d.json", usage_root(), date, h);
-        char* json = read_file_alloc(path);
-        appendf(out, "%s%s", h ? "," : "", json ? json : "null");
-        free(json);
+        struct tm tm;
+        memset(&tm, 0, sizeof(tm));
+        int year, month, day;
+        sscanf(date, "%d-%d-%d", &year, &month, &day);
+        tm.tm_year = year - 1900;
+        tm.tm_mon = month - 1;
+        tm.tm_mday = day;
+        tm.tm_hour = h;
+        s64_t epoch = timegm(&tm);
+        persisted_hour_t ph;
+        bool partial = epoch == current_hour.hour_start;
+        if (partial) {
+            memset(&ph, 0, sizeof(ph));
+            ph.valid = true;
+            ph.hour_start = epoch;
+            ph.listener_seconds = current_hour.listener_seconds;
+            ph.sessions = current_hour.session_starts;
+            ph.unique = hll_estimate(&current_hour.unique);
+            ph.peak = current_hour.peak_concurrent;
+            ph.concurrency_sum = current_hour.concurrency_sum;
+            ph.concurrency_samples = current_hour.concurrency_samples;
+            ph.detail_dropped = current_hour.detail_dropped;
+        } else {
+            load_hour(epoch, &ph);
+        }
+        appendf(out, "%s{\"hour\":%d,\"available\":%s,\"partial\":%s,"
+                     "\"listener_minutes\":%.2f,\"sessions\":%u,\"unique\":%u,"
+                     "\"average_concurrent\":%.2f,\"peak\":%u,\"detail_dropped\":%u}",
+                h ? "," : "", h, ph.valid ? "true" : "false", partial ? "true" : "false",
+                ph.listener_seconds / 60.0, ph.sessions, ph.unique,
+                ph.concurrency_samples ? (double)ph.concurrency_sum / ph.concurrency_samples : 0,
+                ph.peak, ph.detail_dropped);
     }
     out += "]}";
     return strdup(out.c_str());
@@ -992,7 +1088,7 @@ char* usage_stats_day_json(const char* date)
 
 char* usage_stats_recent_json(const char* date, int page, int limit)
 {
-    if (!date || strlen(date) != 10) return strdup("{\"error\":\"invalid date\"}");
+    if (!valid_date(date)) return strdup("{\"error\":\"invalid date\"}");
     page = MAX(page, 0);
     limit = CLAMP(limit, 1, 100);
     int skip = page * limit;
@@ -1021,7 +1117,16 @@ char* usage_stats_recent_json(const char* date, int page, int limit)
                 if (!*end && depth) break;
                 if (seen++ >= skip && emitted < limit) {
                     if (emitted++) out += ",";
-                    out.append(begin, end - begin);
+                    std::string item(begin, end - begin);
+                    const char* key = "\"visitor_hash\":\"";
+                    size_t hash_pos = item.find(key);
+                    if (hash_pos != std::string::npos) {
+                        size_t value = hash_pos + strlen(key);
+                        size_t value_end = item.find('"', value);
+                        if (value_end != std::string::npos && value_end > value + 12)
+                            item.erase(value + 12, value_end - (value + 12));
+                    }
+                    out += item;
                 }
                 p = end;
             }

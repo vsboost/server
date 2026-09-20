@@ -12,6 +12,7 @@ void usage_stats_flush_partial();
 
 bool usage_stats_enabled();
 void usage_stats_set_enabled(bool enabled);
+bool usage_stats_delete_all();
 
 char* usage_stats_heatmap_json(int days, const char* metric);
 char* usage_stats_summary_json();
