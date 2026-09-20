@@ -558,7 +558,7 @@ function fsk_controls_setup()
             '\u2195\ufe0f'
          ),
 			w3_div('id-fsk-console-msg w3-text-output w3-scroll-down w3-small w3-text-black|left:'+ px(fsk.lhs) +'; right:0; width:auto; position:relative; overflow-x:hidden;',
-			   '<pre style="white-space:pre-wrap; word-break:break-all; overflow-wrap:anywhere; margin:0; padding:0 2px;"><code id="id-fsk-console-msgs"></code></pre>'
+			   '<pre><code id="id-fsk-console-msgs"></code></pre>'
 			)
       );
 
