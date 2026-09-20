@@ -40,6 +40,7 @@ Boston, MA  02110-1301, USA.
 #include "dx.h"
 #include "wspr.h"
 #include "FT8.h"
+#include "usage_stats.h"
 
 #include "data_pump.h"
 #include "ext_int.h"
@@ -359,6 +360,64 @@ void c2s_admin(void* param) {
             if (i == 0) {
                 dpump.force_reset = true;
                 dpump.resets = 0;
+                continue;
+            }
+
+            if (strcmp(cmd, "SET usage_summary") == 0) {
+                char* json = usage_stats_summary_json();
+                send_msg_encoded(conn, "ADM", "usage_summary", "%s", json);
+                free(json);
+                continue;
+            }
+
+            int usage_days;
+            char* usage_metric = NULL;
+            i = sscanf(cmd, "SET usage_heatmap days=%d metric=%32ms", &usage_days, &usage_metric);
+            if (i == 2) {
+                char* json = usage_stats_heatmap_json(usage_days, usage_metric);
+                send_msg_encoded(conn, "ADM", "usage_heatmap", "%s", json);
+                free(json);
+                kiwi_asfree(usage_metric);
+                continue;
+            }
+            kiwi_asfree(usage_metric);
+
+            char* usage_date = NULL;
+            i = sscanf(cmd, "SET usage_day date=%16ms", &usage_date);
+            if (i == 1) {
+                char* json = usage_stats_day_json(usage_date);
+                send_msg_encoded(conn, "ADM", "usage_day", "%s", json);
+                free(json);
+                kiwi_asfree(usage_date);
+                continue;
+            }
+            kiwi_asfree(usage_date);
+
+            int usage_page, usage_limit;
+            i = sscanf(cmd, "SET usage_recent date=%16ms page=%d limit=%d",
+                       &usage_date, &usage_page, &usage_limit);
+            if (i == 3) {
+                char* json = usage_stats_recent_json(usage_date, usage_page, usage_limit);
+                send_msg_encoded(conn, "ADM", "usage_recent", "%s", json);
+                free(json);
+                kiwi_asfree(usage_date);
+                continue;
+            }
+            kiwi_asfree(usage_date);
+
+            int usage_enabled;
+            i = sscanf(cmd, "SET usage_enabled=%d", &usage_enabled);
+            if (i == 1) {
+                usage_stats_set_enabled(usage_enabled != 0);
+                admcfg_set_bool_save("usage_stats", usage_enabled != 0);
+                send_msg(conn, SM_NO_DEBUG, "ADM usage_enabled=%d", usage_stats_enabled());
+                continue;
+            }
+
+            if (strcmp(cmd, "SET usage_delete=DELETE") == 0) {
+                bool ok = usage_stats_delete_all();
+                send_msg_encoded(conn, "ADM", "usage_delete", "%s",
+                                 ok ? "{\"ok\":true}" : "{\"ok\":false}");
                 continue;
             }
 
