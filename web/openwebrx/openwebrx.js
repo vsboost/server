@@ -10317,6 +10317,7 @@ function panels_setup()
       w3_hr('|border-color:grey; margin:4px 6px 4px 0') +
       w3_div('id-optbar-rf-container');
    modern_ui_mount('id-rf-theme-actions');
+   restrict_mode_render();
 
    // wf
 	w3_el("id-optbar-wf").innerHTML =
@@ -12285,6 +12286,7 @@ function place_panels()
 // panel-specific setup
 
 var divControl;
+var restrict_mode = { enabled:0, unlocked:0, admin:0, result:'' };
 
 // fixed height instead of content dependent so height is constant between different optbar types
 var OPTBAR_CONTENT_HEIGHT = 150;
@@ -12345,6 +12347,62 @@ function panel_set_vis_button(id)
 	var visOffset = el.activeWidth - visIcon;
 	//console.log('left='+ visOffset +' id='+ (id +'-vis') +' '+ el.activeWidth +' '+ visIcon +' '+ visBorder);
 	vis.style.left = px(visOffset + visBorder);
+}
+
+function restrict_mode_render()
+{
+   var el = w3_el('id-optbar-rf-container');
+   if (!el) return;
+
+   if (!restrict_mode.enabled || restrict_mode.admin || restrict_mode.unlocked) {
+      el.innerHTML = (!restrict_mode.enabled)? '' :
+         w3_div('w3-margin-T-6 w3-text-green', 'Receiver tuning unlocked for this session.');
+      return;
+   }
+
+   var status = restrict_mode.result?
+      w3_div('w3-margin-T-4 w3-text-red', restrict_mode.result) : '';
+   el.innerHTML =
+      w3_div('w3-margin-T-6 w3-text-css-orange', 'Receiver tuning is restricted to HAM and broadcast bands.') +
+      w3_input('w3-custom-events', 'Restrict password', 'restrict.pwd', '', '', 'Unlock this receiver session') +
+      w3_button('w3-margin-T-4', 'Unlock', 'restrict_mode_unlock_cb') +
+      status;
+}
+
+function restrict_mode_state_cb(state)
+{
+   var p = state.split(',');
+   restrict_mode.enabled = +p[0];
+   restrict_mode.unlocked = +p[1];
+   restrict_mode.admin = +p[2];
+   if (restrict_mode.unlocked || restrict_mode.admin) restrict_mode.result = '';
+   restrict_mode_render();
+}
+
+function restrict_mode_unlock_cb()
+{
+   var el = w3_el('id-restrict.pwd');
+   if (!el || el.value == '') return;
+   restrict_mode.result = '';
+   snd_send('SET rpw='+ encodeURIComponent(el.value));
+   el.value = '';
+}
+
+function restrict_mode_result_cb(allowed)
+{
+   if (+allowed) {
+      restrict_mode.result = '';
+   } else {
+      restrict_mode.result = 'Incorrect restrict password.';
+   }
+   restrict_mode_render();
+}
+
+function restrict_mode_tune_rejected_cb(freq_kHz)
+{
+   restrict_mode.result = 'That frequency is restricted. Enter the restrict password to unlock this session.';
+   restrict_mode_render();
+   ext_tune(+freq_kHz, cur_mode, ext_zoom.CUR);
 }
 
 function panel_set_width_height(id, width, height)

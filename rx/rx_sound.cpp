@@ -55,6 +55,7 @@ Boston, MA  02110-1301, USA.
 #include "noise_blank.h"
 #include "rx_sound.h"
 #include "rx_sound_cmd.h"
+#include "restrict.h"
 #include "rx_waterfall.h"
 #include "rx_filter.h"
 #include "wdsp.h"
@@ -99,6 +100,7 @@ static str_hashes_t snd_cmd_hashes[] = {
     { "~~~~~~~~~", STR_HASH_MISS },
     { "SET dbgA", CMD_AUDIO_START },
     { "SET mod=", CMD_TUNE },
+    { "SET rpw=", CMD_RESTRICT_PWD },
     { "SET comp", CMD_COMPRESSION },
     { "SET rein", CMD_REINIT },
     { "SET litt", CMD_LITTLE_ENDIAN },
@@ -163,6 +165,7 @@ void c2s_sound_setup(void* param) {
     send_msg(conn, SM_SND_DEBUG, "MSG freq_offset=%.3f", freq_offset_kHz);
     send_msg(conn, SM_SND_DEBUG, "MSG center_freq=%d bandwidth=%d adc_clk_nom=%.0f", (int)ui_srate / 2, (int)ui_srate, ADC_CLOCK_NOM);
     send_msg(conn, SM_SND_DEBUG, "MSG audio_init=%d audio_rate=%d sample_rate=%.6f", conn->isLocal, snd_rate, frate);
+    restrict_mode_send_state(conn);
 
     dx_last_community_download();
 }

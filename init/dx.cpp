@@ -33,6 +33,7 @@ Boston, MA  02110-1301, USA.
 #include "dx.h"
 #include "rx.h"
 #include "rx_util.h"
+#include "restrict.h"
 #include "coroutines.h"
 #include "sha256.h"
 #include "services.h"
@@ -787,6 +788,7 @@ void dx_label_init() {
     }
 
     dxcfg_init();
+    restrict_mode_reload_policy();
 
     TMEAS(u4_t start = timer_ms();)
     TMEAS(printf("DX_RELOAD START\n");)

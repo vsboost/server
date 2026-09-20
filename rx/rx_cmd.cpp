@@ -44,6 +44,7 @@ Boston, MA  02110-1301, USA.
 
 #include "data_pump.h"
 #include "dx.h"
+#include "restrict.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -739,6 +740,16 @@ bool rx_common_cmd(int stream_type, conn_t* conn, char* cmd) {
                                 continue;
                             if (c->rx_channel == chan || (c->type == STREAM_EXT && c->rx_channel == chan)) {
                                 c->auth_admin = true;
+                            }
+                        }
+
+                        restrict_mode_send_state(conn);
+                        if (!stream_admin_or_mfg && chan != -1) {
+                            for (conn_t* c = conns; c < &conns[N_CONNS]; c++) {
+                                if (c->valid && c->rx_channel == chan &&
+                                    (c->type == STREAM_SOUND || c->type == STREAM_WATERFALL || c->type == STREAM_EXT)) {
+                                    restrict_mode_send_state(c);
+                                }
                             }
                         }
                     }

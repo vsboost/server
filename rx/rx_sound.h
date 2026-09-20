@@ -139,6 +139,7 @@ extern snd_t snd_inst[MAX_RX_CHANS];
 enum snd_cmd_key_e {
     CMD_AUDIO_START = 1,
     CMD_TUNE,
+    CMD_RESTRICT_PWD,
     CMD_COMPRESSION,
     CMD_REINIT,
     CMD_LITTLE_ENDIAN,
