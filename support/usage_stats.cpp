@@ -135,6 +135,7 @@ static bool initialized;
 static char last_error[160];
 
 static bool valid_date(const char* date);
+static bool valid_month(const char* month);
 static bool remove_tree_contents(const std::string& path);
 
 static const char* usage_root()
@@ -234,7 +235,9 @@ static bool write_atomic_bytes(const std::string& path, const void* data, size_t
         }
         off += (size_t)n;
     }
-    bool ok = fsync(fd) == 0 && close(fd) == 0 && rename(tmp.c_str(), path.c_str()) == 0;
+    bool ok = fsync(fd) == 0;
+    if (close(fd) != 0) ok = false;
+    if (ok && rename(tmp.c_str(), path.c_str()) != 0) ok = false;
     if (!ok) {
         set_error("commit %s failed: %s", path.c_str(), strerror(errno));
         unlink(tmp.c_str());
@@ -247,9 +250,11 @@ typedef bool (*json_writer_t)(FILE*, void*);
 static bool write_atomic_json(const std::string& path, json_writer_t writer, void* param)
 {
     std::string tmp = path + ".tmp";
-    FILE* fp = fopen(tmp.c_str(), "w");
+    int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    FILE* fp = fd >= 0 ? fdopen(fd, "w") : NULL;
     if (!fp) {
         set_error("fopen %s failed: %s", tmp.c_str(), strerror(errno));
+        if (fd >= 0) close(fd);
         return false;
     }
     bool ok = writer(fp, param);
@@ -503,7 +508,8 @@ static void start_session(int ch, conn_t* conn, s64_t now)
     a->start_mode = conn->mode;
     a->last_freq_kHz = a->start_freq_kHz;
     a->last_mode = a->start_mode;
-    if (conn->ext) kiwi_strncpy(a->last_ext, conn->ext->name, sizeof(a->last_ext));
+    if (ext_users[ch].ext)
+        kiwi_strncpy(a->last_ext, ext_users[ch].ext->name, sizeof(a->last_ext));
 
     current_hour.session_starts++;
     hll_add(&current_hour.unique, a->visitor_hash);
@@ -947,10 +953,9 @@ static void rollover(s64_t new_hour)
         current_hour.hour_start = new_hour;
         return;
     }
-    hour_t completed = current_hour;
+    persist_hour(&current_hour);
     memset(&current_hour, 0, sizeof(current_hour));
     current_hour.hour_start = new_hour;
-    persist_hour(&completed);
 }
 
 static void load_or_create_key()
@@ -1017,6 +1022,17 @@ static bool valid_date(const char* date)
     struct tm check;
     gmtime_r(&t, &check);
     return check.tm_year == tm.tm_year && check.tm_mon == tm.tm_mon && check.tm_mday == tm.tm_mday;
+}
+
+static bool valid_month(const char* month)
+{
+    if (!month || strlen(month) != 7 || month[4] != '-') return false;
+    for (int i = 0; i < 7; i++) {
+        if (i != 4 && (month[i] < '0' || month[i] > '9')) return false;
+    }
+    int year, value;
+    return sscanf(month, "%d-%d", &year, &value) == 2 &&
+        year >= 2020 && value >= 1 && value <= 12;
 }
 
 static void appendf(std::string& out, const char* fmt, ...)
@@ -1102,7 +1118,7 @@ void usage_stats_tick()
         a->last_freq_kHz = freq_kHz;
         a->last_mode = conn->mode;
 
-        const char* ext_name = conn->ext ? conn->ext->name : "";
+        const char* ext_name = ext_users[ch].ext ? ext_users[ch].ext->name : "";
         bool ext_started = strcmp(a->last_ext, ext_name) != 0 && *ext_name;
         extension_add(&current_hour, ext_name, ext_started);
         kiwi_strncpy(a->last_ext, ext_name, sizeof(a->last_ext));
@@ -1210,18 +1226,145 @@ char* usage_stats_heatmap_json(int days, const char* metric)
 
 char* usage_stats_summary_json()
 {
+    s64_t now = time(NULL);
+    s64_t current = hour_floor(now);
+    s64_t today_start = current - (current % 86400);
+    u64_t today_listener = current_hour.listener_seconds;
+    u64_t today_concurrency_sum = current_hour.concurrency_sum;
+    u64_t today_concurrency_samples = current_hour.concurrency_samples;
+    u4_t today_sessions = current_hour.session_starts;
+    u4_t today_peak = current_hour.peak_concurrent;
+    hll_t today_hll = current_hour.unique;
+    for (s64_t epoch = today_start; epoch < current; epoch += 3600) {
+        persisted_hour_t ph;
+        hll_t hh;
+        if (!load_hour(epoch, &ph, &hh)) continue;
+        today_listener += ph.listener_seconds;
+        today_sessions += ph.sessions;
+        today_peak = MAX(today_peak, ph.peak);
+        today_concurrency_sum += ph.concurrency_sum;
+        today_concurrency_samples += ph.concurrency_samples;
+        hll_merge(&today_hll, &hh);
+    }
+
+    time_t now_t = now;
+    struct tm now_tm;
+    gmtime_r(&now_t, &now_tm);
+    struct tm month_tm = now_tm;
+    month_tm.tm_mday = 1;
+    month_tm.tm_hour = month_tm.tm_min = month_tm.tm_sec = 0;
+    s64_t month_start = timegm(&month_tm);
+    u64_t month_listener = today_listener;
+    u4_t month_sessions = today_sessions;
+    u4_t month_peak = today_peak;
+    hll_t month_hll = today_hll;
+    for (s64_t epoch = month_start; epoch < today_start; epoch += 86400) {
+        char date[16], ignored[4];
+        format_hour(epoch, date, sizeof(date), ignored, sizeof(ignored));
+        persisted_hour_t day;
+        hll_t dh;
+        if (!load_rollup_file(std::string(usage_root()) + "/daily/" + date + ".json", &day, &dh))
+            continue;
+        month_listener += day.listener_seconds;
+        month_sessions += day.sessions;
+        month_peak = MAX(month_peak, day.peak);
+        hll_merge(&month_hll, &dh);
+    }
+
     std::string out;
     appendf(out, "{\"enabled\":%s,\"estimated_unique\":true,\"hour_start\":%lld,"
                  "\"listener_seconds\":%llu,\"sessions\":%u,\"unique\":%u,"
                  "\"peak\":%u,\"average_concurrent\":%.2f,\"detail_dropped\":%u,"
+                 "\"today_listener_seconds\":%llu,\"today_sessions\":%u,\"today_unique\":%u,"
+                 "\"today_peak\":%u,\"today_average_concurrent\":%.2f,"
+                 "\"month_listener_seconds\":%llu,\"month_sessions\":%u,\"month_unique\":%u,"
+                 "\"month_peak\":%u,"
                  "\"memory_bytes\":%zu,\"last_error\":\"%s\"}",
             enabled ? "true" : "false", current_hour.hour_start, current_hour.listener_seconds,
             current_hour.session_starts, hll_estimate(&current_hour.unique),
             current_hour.peak_concurrent,
             current_hour.concurrency_samples ?
                 (double)current_hour.concurrency_sum / current_hour.concurrency_samples : 0,
-            current_hour.detail_dropped, sizeof(current_hour) + sizeof(active),
+            current_hour.detail_dropped,
+            today_listener, today_sessions, hll_estimate(&today_hll), today_peak,
+            today_concurrency_samples ?
+                (double)today_concurrency_sum / today_concurrency_samples : 0,
+            month_listener, month_sessions, hll_estimate(&month_hll), month_peak,
+            sizeof(current_hour) + sizeof(active),
             json_escape(last_error).c_str());
+    return strdup(out.c_str());
+}
+
+char* usage_stats_month_json(const char* month)
+{
+    if (!valid_month(month)) return strdup("{\"error\":\"invalid month\"}");
+    int year, month_number;
+    sscanf(month, "%d-%d", &year, &month_number);
+    struct tm start_tm;
+    memset(&start_tm, 0, sizeof(start_tm));
+    start_tm.tm_year = year - 1900;
+    start_tm.tm_mon = month_number - 1;
+    start_tm.tm_mday = 1;
+    s64_t start = timegm(&start_tm);
+
+    struct tm end_tm = start_tm;
+    end_tm.tm_mon++;
+    s64_t end = timegm(&end_tm);
+    s64_t today = hour_floor(time(NULL));
+    today -= today % 86400;
+
+    std::string out = "{\"month\":\"" + json_escape(month) + "\",\"days\":[";
+    int emitted = 0;
+    for (s64_t epoch = start; epoch < end; epoch += 86400) {
+        char date[16], ignored[4];
+        format_hour(epoch, date, sizeof(date), ignored, sizeof(ignored));
+        persisted_hour_t day;
+        memset(&day, 0, sizeof(day));
+        bool partial = epoch == today;
+        if (partial) {
+            hll_t hll;
+            memset(&hll, 0, sizeof(hll));
+            s64_t current = hour_floor(time(NULL));
+            for (s64_t hour = epoch; hour <= current; hour += 3600) {
+                if (hour == current) {
+                    day.listener_seconds += current_hour.listener_seconds;
+                    day.sessions += current_hour.session_starts;
+                    day.peak = MAX(day.peak, current_hour.peak_concurrent);
+                    day.concurrency_sum += current_hour.concurrency_sum;
+                    day.concurrency_samples += current_hour.concurrency_samples;
+                    day.detail_dropped += current_hour.detail_dropped;
+                    hll_merge(&hll, &current_hour.unique);
+                } else {
+                    persisted_hour_t ph;
+                    hll_t hh;
+                    if (!load_hour(hour, &ph, &hh)) continue;
+                    day.listener_seconds += ph.listener_seconds;
+                    day.sessions += ph.sessions;
+                    day.peak = MAX(day.peak, ph.peak);
+                    day.concurrency_sum += ph.concurrency_sum;
+                    day.concurrency_samples += ph.concurrency_samples;
+                    day.detail_dropped += ph.detail_dropped;
+                    hll_merge(&hll, &hh);
+                }
+            }
+            day.unique = hll_estimate(&hll);
+            day.valid = true;
+        } else {
+            hll_t unused;
+            day.valid = load_rollup_file(
+                std::string(usage_root()) + "/daily/" + date + ".json", &day, &unused);
+        }
+        if (!day.valid && epoch > today) continue;
+        appendf(out, "%s{\"date\":\"%s\",\"available\":%s,\"partial\":%s,"
+                     "\"listener_minutes\":%.2f,\"sessions\":%u,\"unique\":%u,"
+                     "\"average_concurrent\":%.2f,\"peak\":%u,\"detail_dropped\":%u}",
+                emitted++ ? "," : "", date, day.valid ? "true" : "false",
+                partial ? "true" : "false", day.listener_seconds / 60.0,
+                day.sessions, day.unique,
+                day.concurrency_samples ? (double)day.concurrency_sum / day.concurrency_samples : 0,
+                day.peak, day.detail_dropped);
+    }
+    out += "]}";
     return strdup(out.c_str());
 }
 

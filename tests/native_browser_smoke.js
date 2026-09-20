@@ -1684,7 +1684,7 @@ function fetchRawResponse(headers, path) {
         await clickAdminNav('id-nav-usage');
         await adminPage.waitForFunction(() =>
             document.querySelectorAll('.ui-usage-heat-cell').length === 168 &&
-            document.querySelectorAll('.ui-usage-summary-card').length === 6,
+            document.querySelectorAll('.ui-usage-summary-card').length === 8,
             null, { timeout: 10000 });
         await adminPage.evaluate(() => ext_send('SET usage_test_stress=5000'));
         await adminPage.waitForTimeout(500);
@@ -1704,6 +1704,7 @@ function fetchRawResponse(headers, path) {
             return {
                 heading: page.querySelector('.ui-admin-page-header h2')?.textContent,
                 summaryCards: page.querySelectorAll('.ui-usage-summary-card').length,
+                monthBars: page.querySelectorAll('#id-usage-month .ui-usage-bar-row').length,
                 heatmapCells: cells.length,
                 heatmapRows: page.querySelectorAll('.ui-usage-heatmap-row').length,
                 partialCells: page.querySelectorAll('.ui-usage-heat-cell.is-partial').length,
@@ -2591,7 +2592,8 @@ function fetchRawResponse(headers, path) {
             !adminStatus.runtime.resetButton)
             throw new Error(`invalid modern admin status page: ${JSON.stringify(adminStatus)}`);
         if (adminUsage.heading !== 'Usage' ||
-            adminUsage.summaryCards !== 6 ||
+            adminUsage.summaryCards !== 8 ||
+            adminUsage.monthBars < 1 ||
             adminUsage.heatmapCells !== 168 ||
             adminUsage.heatmapRows !== 7 ||
             adminUsage.partialCells !== 1 ||

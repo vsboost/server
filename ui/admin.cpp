@@ -370,6 +370,17 @@ void c2s_admin(void* param) {
                 continue;
             }
 
+            char* usage_month = NULL;
+            i = sscanf(cmd, "SET usage_month month=%8ms", &usage_month);
+            if (i == 1) {
+                char* json = usage_stats_month_json(usage_month);
+                send_msg_encoded(conn, "ADM", "usage_month", "%s", json);
+                free(json);
+                kiwi_asfree(usage_month);
+                continue;
+            }
+            kiwi_asfree(usage_month);
+
             int usage_days;
             char* usage_metric = NULL;
             i = sscanf(cmd, "SET usage_heatmap days=%d metric=%32ms", &usage_days, &usage_metric);

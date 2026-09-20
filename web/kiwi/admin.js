@@ -3220,6 +3220,11 @@ function usage_html()
       '<section class="ui-usage-summary" id="id-usage-summary">' +
          '<div class="ui-usage-empty">Waiting for usage data</div>' +
       '</section>' +
+      '<section class="ui-admin-section">' +
+         '<header><div><h3>Monthly trend</h3>' +
+            '<p>Daily listener time for the current UTC month.</p></div></header>' +
+         '<div id="id-usage-month" class="ui-usage-chart"><div class="ui-usage-empty">Loading monthly trend</div></div>' +
+      '</section>' +
       '<section class="ui-admin-section ui-usage-heatmap-section">' +
          '<header><div><h3>Activity heatmap</h3>' +
             '<p>Past seven UTC days in one-hour cells. Select a cell for detailed activity.</p></div>' +
@@ -3277,7 +3282,9 @@ function usage_blur()
 
 function usage_refresh()
 {
+   var month = new Date().toISOString().slice(0, 7);
    ext_send('SET usage_summary');
+   ext_send('SET usage_month month='+ month);
    ext_send('SET usage_heatmap days=7 metric='+ usage.metric);
 }
 
@@ -3310,11 +3317,13 @@ function usage_summary_cb(o)
 {
    usage.summary = o;
    var cards = [
-      ['Listener time', usage_duration(o.listener_seconds)],
-      ['Session starts', (+o.sessions || 0).toLocaleString()],
-      ['Estimated unique', (+o.unique || 0).toLocaleString()],
-      ['Peak concurrent', (+o.peak || 0).toLocaleString()],
-      ['Average concurrent', (+o.average_concurrent || 0).toFixed(2)],
+      ['Today listener time', usage_duration(o.today_listener_seconds)],
+      ['Today sessions', (+o.today_sessions || 0).toLocaleString()],
+      ['Today estimated unique', (+o.today_unique || 0).toLocaleString()],
+      ['Today peak', (+o.today_peak || 0).toLocaleString()],
+      ['Month listener time', usage_duration(o.month_listener_seconds)],
+      ['Month sessions', (+o.month_sessions || 0).toLocaleString()],
+      ['Month estimated unique', (+o.month_unique || 0).toLocaleString()],
       ['Analytics memory', ((+o.memory_bytes || 0) / 1024).toFixed(1) +' KiB']
    ];
    w3_innerHTML('id-usage-summary', cards.map(function(card) {
@@ -3325,6 +3334,17 @@ function usage_summary_cb(o)
    var status = o.last_error? 'Last write error: '+ o.last_error :
       'Unique visitors are approximate. Current-hour activity is held in bounded memory.';
    w3_innerHTML('id-usage-status', status);
+}
+
+function usage_month_cb(o)
+{
+   var days = (o.days || []).filter(function(day) { return day.available; });
+   w3_innerHTML('id-usage-month',
+      '<h4>'+ (o.month || '') +' UTC listener minutes</h4>' +
+      usage_bar_chart(days, 'listener_minutes', function(day) {
+         return day.date.slice(8) + (day.partial? ' *':'');
+      })
+   );
 }
 
 function usage_heatmap_cb(o)
@@ -3774,6 +3794,10 @@ function admin_recv(data)
 
 			case "usage_heatmap":
 			   usage_heatmap_cb(kiwi_JSON_parse('usage_heatmap', decodeURIComponent(param[1])) || {});
+			   break;
+
+			case "usage_month":
+			   usage_month_cb(kiwi_JSON_parse('usage_month', decodeURIComponent(param[1])) || {});
 			   break;
 
 			case "usage_day":
