@@ -941,9 +941,9 @@ html, body
 	outline-offset: 2px;
 }
 
-.ui-extension-panel.ui-extension-collapsed #id-ext-controls-container,
-.ui-extension-panel.ui-extension-collapsed #id-ext-controls-vis,
-.ui-extension-panel.ui-extension-collapsed #id-ext-controls-help
+.ui-extension-panel.ui-extension-collapsed .id-ext-controls-container,
+.ui-extension-panel.ui-extension-collapsed .id-ext-controls-vis,
+.ui-extension-panel.ui-extension-collapsed .id-ext-controls-help
 {
 	visibility: hidden;
 	pointer-events: none;
