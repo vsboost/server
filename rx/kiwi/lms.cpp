@@ -44,6 +44,7 @@ int CLMS::Initialize(nr_type_e nr_type, TYPEREAL nr_param[NOISE_PARAMS]) {
 
     memset(m_dline, 0, sizeof(m_dline));
     memset(m_lmscoef, 0, sizeof(m_lmscoef));
+    m_leveler.Reset();
 
     // printf("LMS %s dlen=%d FIR=%d beta=%.6f decay=%.6f\n", (m_nr_type == NR_AUTONOTCH)? "autonotch" : "denoise",
     //     m_dlen, LMSLEN, m_beta, m_decay);
@@ -99,7 +100,10 @@ void CLMS::ProcessFilter(int ilen, TYPEMONO16* ibuf, TYPEMONO16* obuf) {
         DEC(m_dlp); // backup to last
 
         if (m_nr_type == NR_DENOISE) {
-            obuf[bp] = (TYPEMONO16)MROUND(fir * 2 * K_AMPMAX);
+            TYPEREAL output = m_leveler.Apply(samp, fir);
+            if (output > 1.0f) output = 1.0f;
+            if (output < -1.0f) output = -1.0f;
+            obuf[bp] = (TYPEMONO16)MROUND(output * K_AMPMAX);
         }
 
         TYPEREAL err = samp - fir;

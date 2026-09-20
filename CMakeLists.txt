@@ -299,6 +299,25 @@ if(NATIVE_HARNESS)
     target_include_directories(test_airband_si5351 PRIVATE "${UPSTREAM_DIR}")
     add_test(NAME airband_si5351 COMMAND test_airband_si5351)
 
+    add_executable(test_noise_reduction_gain
+        tests/test_noise_reduction_gain.cpp
+        rx/kiwi/lms.cpp
+        rx/wdsp/ANR.cpp
+        rx/Teensy/NR_spectral.cpp
+    )
+    target_include_directories(test_noise_reduction_gain PRIVATE
+        "${UPSTREAM_DIR}/tests/stubs"
+        "${UPSTREAM_DIR}"
+        "${PROJECT_BINARY_DIR}"
+        "${UPSTREAM_DIR}/rx"
+        "${UPSTREAM_DIR}/rx/CuteSDR"
+        "${UPSTREAM_DIR}/rx/kiwi"
+        "${UPSTREAM_DIR}/rx/wdsp"
+        "${UPSTREAM_DIR}/rx/Teensy"
+        "${UPSTREAM_DIR}/extensions/noise_filter"
+    )
+    add_test(NAME noise_reduction_gain COMMAND test_noise_reduction_gain)
+
     add_executable(test_cw_skimmer_replay
         tests/test_cw_skimmer_replay.cpp
         extensions/CW_skimmer/csdr/cw.cpp
