@@ -20,6 +20,7 @@ var extint = {
    seq: 0,
    scanning: 0,
    in_rf_tab: false,
+   panel_collapsed: false,
    
    web_socket_fragmentation: 8192,
    send_hiwat: 0,
@@ -823,6 +824,13 @@ function ext_panel_init()
 	el.innerHTML =
 		w3_div('id-ext-controls-container ui-extension-content w3-relative|width:100%;height:100%;') +
 		w3_div('id-ext-controls-vis class-vis') +
+		w3_div('id-ext-controls-collapse class-ext-controls-collapse',
+		   '<button id="id-ext-controls-collapse-btn" class="class-vis-button class-ext-controls-collapse-button" ' +
+		      'type="button" aria-label="Collapse extension controls" aria-expanded="true" ' +
+		      'aria-controls="id-ext-controls-container" onclick="extint_panel_collapse()">' +
+		      '<i id="id-ext-controls-collapse-icon" class="fa fa-chevron-down" aria-hidden="true"></i>' +
+		   '</button>'
+		) +
 		w3_div('id-ext-controls-help cl-ext-help',
 		   w3_button('id-ext-controls-help-btn class-button-small w3-green w3-disabled||onclick="extint_help_click()"', 'help')
 		);
@@ -860,6 +868,22 @@ function ext_hide_spectrum()
    toggle_or_set_spec(toggle_e.SET | toggle_e.NO_CLOSE_EXT, spec.NONE);
 }
 
+function extint_panel_collapse(set)
+{
+   var panel = w3_el('id-ext-controls');
+   var button = w3_el('id-ext-controls-collapse-btn');
+   var icon = w3_el('id-ext-controls-collapse-icon');
+   if (!panel || !button || !icon) return;
+
+   var collapsed = isDefined(set)? !!set : !extint.panel_collapsed;
+   extint.panel_collapsed = collapsed;
+   panel.classList.toggle('ui-extension-collapsed', collapsed);
+   button.setAttribute('aria-expanded', collapsed? 'false':'true');
+   button.setAttribute('aria-label', collapsed? 'Expand extension controls':'Collapse extension controls');
+   button.title = collapsed? 'Expand extension controls':'Collapse extension controls';
+   icon.className = 'fa '+ (collapsed? 'fa-chevron-up':'fa-chevron-down');
+}
+
 function extint_panel_show(controls_html, data_html, show_func, hide_func, show_help_button)
 {
    //console.log('extint_panel_show: extint.displayed='+ extint.displayed);
@@ -887,6 +911,7 @@ function extint_panel_show(controls_html, data_html, show_func, hide_func, show_
    
    var ext_name = extint.current_ext_name;
    var ext_panel = w3_el('id-ext-controls');
+   extint_panel_collapse(0);
    if (!ext_panel.contains(document.activeElement))
       extint.return_focus = document.activeElement;
    ext_panel.setAttribute('aria-label', ext_name +' extension controls');
@@ -952,6 +977,7 @@ function ext_panel_redisplay(s) { w3_innerHTML('id-ext-controls-container', s); 
 function extint_panel_hide(skip_calling_hide_spec)
 {
 	console.log('extint_panel_hide using_data_container='+ extint.using_data_container +' skip_calling_hide_spec='+ skip_calling_hide_spec);
+   extint_panel_collapse(0);
 
 	if (extint.using_data_container) {
 		w3_hide('id-ext-data-container');
