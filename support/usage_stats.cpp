@@ -337,7 +337,10 @@ static void visitor_hash(const char* ip, u1_t* out)
     if (normalize_ip(ip, normalized, &len)) data = normalized;
     else len = strlen(ip);
     unsigned out_len = 0;
-    HMAC(EVP_sha256(), identity_key, sizeof(identity_key), (const unsigned char*)data, len, out, &out_len);
+    if (!HMAC(EVP_sha256(), identity_key, sizeof(identity_key),
+            (const unsigned char*)data, len, out, &out_len) || out_len != HASH_BYTES) {
+        memset(out, 0, HASH_BYTES);
+    }
 }
 
 static int hll_rank(u64_t value)
@@ -675,15 +678,19 @@ static bool load_hour(s64_t epoch, persisted_hour_t* out, hll_t* hll = NULL)
     char* json = read_file_alloc(path);
     if (!json) return false;
     memset(out, 0, sizeof(*out));
-    u64_t v;
+    u64_t v = 0;
     bool ok = extract_u64(json, "hour_start", &v);
     out->hour_start = v;
     ok &= extract_u64(json, "listener_seconds", &out->listener_seconds);
+    v = 0;
     ok &= extract_u64(json, "sessions", &v); out->sessions = v;
+    v = 0;
     ok &= extract_u64(json, "unique_estimate", &v); out->unique = v;
+    v = 0;
     ok &= extract_u64(json, "peak_concurrent", &v); out->peak = v;
     extract_u64(json, "concurrency_sum", &out->concurrency_sum);
     extract_u64(json, "concurrency_samples", &out->concurrency_samples);
+    v = 0;
     extract_u64(json, "detail_dropped", &v); out->detail_dropped = v;
     if (hll) {
         char hex[HLL_REGS * 2 + 1];
@@ -699,15 +706,19 @@ static bool load_rollup_file(const std::string& path, persisted_hour_t* out, hll
     char* json = read_file_alloc(path);
     if (!json) return false;
     memset(out, 0, sizeof(*out));
-    u64_t v;
+    u64_t v = 0;
     bool ok = extract_u64(json, "start", &v);
     out->hour_start = v;
     ok &= extract_u64(json, "listener_seconds", &out->listener_seconds);
+    v = 0;
     ok &= extract_u64(json, "sessions", &v); out->sessions = v;
+    v = 0;
     ok &= extract_u64(json, "unique_estimate", &v); out->unique = v;
+    v = 0;
     ok &= extract_u64(json, "peak_concurrent", &v); out->peak = v;
     extract_u64(json, "concurrency_sum", &out->concurrency_sum);
     extract_u64(json, "concurrency_samples", &out->concurrency_samples);
+    v = 0;
     extract_u64(json, "detail_dropped", &v); out->detail_dropped = v;
     char hex[HLL_REGS * 2 + 1];
     ok &= extract_string(json, "hll", hex, sizeof(hex)) && hll_from_hex(hex, hll);
@@ -1143,8 +1154,7 @@ void usage_stats_connection_closed(conn_t* conn)
 void usage_stats_flush_partial()
 {
     if (!initialized || !enabled) return;
-    hour_t partial = current_hour;
-    persist_hour(&partial);
+    persist_hour(&current_hour);
 }
 
 bool usage_stats_enabled()
