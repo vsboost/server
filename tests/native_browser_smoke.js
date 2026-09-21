@@ -2872,7 +2872,7 @@ function fetchRawResponse(headers, path) {
             adminUpdate.sections.join(',') !==
                 'Update status,Available update,Previous releases' ||
             !adminUpdate.statusHook ||
-            adminUpdate.primaryAction !== 'Restart' ||
+            !['Check for updates', 'Install', 'Restart'].includes(adminUpdate.primaryAction) ||
             adminUpdate.previousAction !== 'Previous Releases')
             throw new Error(`invalid modern admin Update page: ${JSON.stringify(adminUpdate)}`);
         if (adminNetwork.heading !== 'Network' ||

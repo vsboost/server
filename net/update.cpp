@@ -149,7 +149,7 @@ static int json_object_value(const char* json, const jsmntok_t* tok, int object,
         return -1;
 
     int pos = object + 1;
-    for (int i = 0; i < tok[object].size; i += 2) {
+    for (int i = 0; i < tok[object].size; i++) {
         if (json_token_eq(json, &tok[pos], key))
             return pos + 1;
         pos = json_skip(tok, pos + 1);
@@ -527,9 +527,8 @@ common_return:
 // called at update check TOD, on each user logout in case update is pending or on demand by admin UI
 void check_for_update(update_check_e type, conn_t* conn) {
 #ifdef NATIVE_HARNESS
-    (void) type;
-    (void) conn;
-    return;
+    if (type == WAIT_UNTIL_NO_USERS)
+        return;
 #endif
 
     bool force = (type != WAIT_UNTIL_NO_USERS);
