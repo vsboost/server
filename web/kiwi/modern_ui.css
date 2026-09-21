@@ -2292,16 +2292,53 @@
    padding-top: var(--ui-space-3);
 }
 
-.ui-modern .ui-admin-release-picker label,
-.ui-modern .ui-admin-release-picker select {
-   display: block;
-   max-width: 360px;
+.ui-modern .ui-admin-release-list {
+   display: grid;
+   gap: var(--ui-space-2);
+   max-height: 13.5rem;
+   overflow-y: auto;
+   padding-right: var(--ui-space-2);
+}
+
+.ui-modern .ui-admin-release-card {
+   align-items: start;
+   background: var(--ui-surface);
+   border: 1px solid var(--ui-border);
+   border-radius: var(--ui-radius);
+   color: inherit;
+   cursor: pointer;
+   display: grid;
+   gap: 0.2rem;
+   padding: var(--ui-space-3);
+   text-align: left;
    width: 100%;
 }
 
-.ui-modern .ui-admin-release-picker label {
+.ui-modern .ui-admin-release-card:hover,
+.ui-modern .ui-admin-release-card.is-selected {
+   background: var(--ui-surface-hover);
+   border-color: var(--ui-accent);
+}
+
+.ui-modern .ui-admin-release-card strong {
+   color: var(--ui-text);
+}
+
+.ui-modern .ui-admin-release-card span {
+   color: var(--ui-text-muted);
+   font-size: 0.82rem;
+   overflow-wrap: anywhere;
+}
+
+.ui-modern .ui-admin-release-card em {
+   color: var(--ui-success);
+   font-size: 0.78rem;
+   font-style: normal;
    font-weight: 600;
-   margin-bottom: var(--ui-space-2);
+}
+
+.ui-modern .ui-admin-release-details {
+   margin-top: var(--ui-space-3);
 }
 
 .ui-modern .ui-admin-release-picker ul {

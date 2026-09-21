@@ -1251,66 +1251,47 @@ function update_html()
    var policy =
       w3_div('w3-text-teal ui-admin-update-policy',
          w3_div('ui-admin-update-policy-row',
-            w3_switch_label('w3-label-inline w3-label-left', 'Automatically check for software updates?',
-               'Yes', 'No', 'adm.update_check', adm.update_check, 'admin_radio_YN_cb')
-         ),
-         w3_div('ui-admin-update-policy-row',
-            w3_switch_label('w3-label-inline w3-label-left', 'Automatically download and install software updates?',
-               'Yes', 'No', 'adm.update_install', adm.update_install, 'admin_radio_YN_cb')
-         ),
-         w3_div('ui-admin-update-policy-row',
-            w3_switch_label('w3-label-inline w3-label-left', 'Reboot after an automatic update?',
-               'Yes', 'No', 'adm.update_reboot', adm.update_reboot, 'admin_radio_YN_cb')
-         ),
-         w3_div('w3-margin-T-16',
-            w3_select('/w3-label-inline/w3-width-auto', 'After a restart', '', 'adm.restart_update',
-               adm.restart_update, restart_update_u, 'admin_select_cb')
+            w3_switch_label('w3-label-inline w3-label-left', 'Automatic updates',
+               'On', 'Off', 'adm.update_install', adm.update_check && adm.update_install,
+               'update_auto_cb')
          )
       );
 
    var actions =
       w3_div('w3-text-teal ui-admin-update-actions',
          w3_div('w3-valign ui-admin-update-action',
-            '<b>Check for software update</b>' +
+            '<b>Check for updates</b>' +
             w3_button('w3-aqua w3-margin', 'Check now', 'update_check_now_cb')
-         ),
-         w3_div('w3-valign ui-admin-update-action',
-            '<b>Install a selected release</b>' +
-            w3_button('w3-aqua w3-margin', 'Browse releases', 'update_release_list_now_cb')
-         ),
-         w3_div('w3-valign ui-admin-update-action',
-            '<b>Force software reinstall</b>' +
-            w3_div('ui-admin-update-action-buttons',
-               w3_button('w3-aqua w3-margin', 'Install', 'update_build_now_cb') +
-               w3_button('w3-red w3-margin', 'Install & reboot', 'update_build_reboot_now_cb'))
          )
-      );
-
-   var channel =
-      w3_divs('w3-text-teal',
-         w3_switch_label('w3-label-inline w3-label-left', 'Update channel', 'Alpha', 'Stable',
-            'adm.update_channel', adm.update_channel, 'admin_radio_YN_cb'),
-         w3_text('w3-text-black',
-            'Stable is recommended for normal operation. Alpha provides early access to the latest release ' +
-            'and may contain bugs or affect customization settings.')
       );
 
    var content =
       admin_page_header('SOFTWARE', 'Updates',
-         'Choose how the receiver discovers, installs and tests new software releases.') +
+         'Keep this receiver current with the latest software release.') +
       '<div class="ui-admin-section-grid">' +
-         admin_section('Update status', 'Current check, installation and restart activity', status,
+         admin_section('Software status', 'Your current version and available updates', status,
             'ui-admin-section-wide') +
-         admin_section('Automatic updates', 'Set the routine update and post-restart policy', policy) +
-         admin_section('Manual actions', 'Check, select, or reinstall software releases',
-            actions + w3_div('id-release-picker ui-admin-release-picker w3-margin-T-16')) +
-         admin_section('Release channel', 'Balance stability against early access to changes', channel,
+         admin_section('Automatic updates', 'Check for and install new releases automatically', policy) +
+         admin_section('Check for updates', 'Look for the latest available release now', actions) +
+         admin_section('Install a selected release',
+            'Choose a previous release. Only three releases are visible at a time; scroll for more.',
+            w3_div('ui-admin-update-action',
+               '<b>Available releases</b>' +
+               w3_button('w3-aqua w3-margin', 'Browse releases', 'update_release_list_now_cb')) +
+            w3_div('id-release-picker ui-admin-release-picker w3-margin-T-16'),
             'ui-admin-section-wide') +
       '</div>';
 	return w3_div('id-update w3-hide ui-admin-update', content);
 }
 
-var restart_update_u = { 0: 'install updates', 1: 'delay updates until overnight' };
+function update_auto_cb(path, idx, first)
+{
+   var enabled = (+idx === 0);
+   var save = isArg(first)? !first : true;
+   adm.update_check = adm.update_install = enabled;
+   ext_set_cfg_param('adm.update_check', enabled, save);
+   ext_set_cfg_param('adm.update_install', enabled, save);
+}
 
 function update_check_now_cb(id, idx)
 {
@@ -1333,6 +1314,7 @@ function update_build_reboot_now_cb(id, idx)
 }
 
 var update_release_catalog = {};
+var update_selected_release_id = null;
 
 function update_escape_html(value)
 {
@@ -1374,35 +1356,48 @@ function update_release_list_cb(response)
    }
 
    picker.innerHTML =
-      '<label for="id-update-release-select">Choose a release</label>' +
-      '<select id="id-update-release-select" class="w3-select w3-border" size="3"></select>' +
-      w3_div('id-update-release-details w3-margin-T-8');
-   var select = w3_el('id-update-release-select');
+      '<div id="id-update-release-list" class="ui-admin-release-list" role="listbox" ' +
+         'aria-label="Available releases"></div>' +
+      '<div id="id-update-release-details" class="ui-admin-release-details"></div>';
+   var list = w3_el('id-update-release-list');
    ids.forEach(function(id) {
       var release = update_release_catalog[id];
-      var option = document.createElement('option');
-      option.value = id;
-      option.textContent = (release.local? 'SD card: ' : '') + (release.date || id);
-      select.appendChild(option);
+      var download = release.downloads[0];
+      var card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'ui-admin-release-card';
+      card.dataset.releaseId = id;
+      card.setAttribute('role', 'option');
+      card.innerHTML =
+         '<strong>'+ update_escape_html(release.date || id) +'</strong>' +
+         '<span>'+ update_escape_html(download.filename || '') +'</span>' +
+         (release.local? '<em>Available on SD card</em>' : '');
+      card.onclick = function() { update_release_select_cb(id); };
+      list.appendChild(card);
    });
-   select.value = ids[0];
-   select.onchange = update_release_select_cb;
-   update_release_select_cb();
+   update_release_select_cb(ids[0]);
 }
 
-function update_release_select_cb()
+function update_release_select_cb(release_id)
 {
-   var select = w3_el('id-update-release-select');
    var details = w3_el('id-update-release-details');
-   if (!select || !details) return;
+   if (!details) return;
 
-   var id = select.value;
+   var id = release_id || update_selected_release_id;
    var release = update_release_catalog[id];
    var download = release?.downloads?.[0];
    if (!release || !download) {
       details.innerHTML = '<span class="w3-text-red">Selected release is unavailable.</span>';
       return;
    }
+
+   update_selected_release_id = id;
+   Array.from(w3_el('id-update-release-list').querySelectorAll('.ui-admin-release-card'))
+      .forEach(function(card) {
+         var selected = card.dataset.releaseId === id;
+         card.classList.toggle('is-selected', selected);
+         card.setAttribute('aria-selected', selected? 'true' : 'false');
+      });
 
    var changes = Array.isArray(release.changes)? release.changes.map(function(change) {
       return '<li>'+ update_escape_html(change) +'</li>';
@@ -1421,11 +1416,10 @@ function update_release_select_cb()
 
 function update_release_install_cb(reboot)
 {
-   var select = w3_el('id-update-release-select');
-   if (!select || !/^\d{8}$/.test(select.value)) return;
-   ext_send('SET release_install date='+ select.value +' reboot='+ (reboot? 1 : 0));
+   if (!/^\d{8}$/.test(update_selected_release_id || '')) return;
+   ext_send('SET release_install date='+ update_selected_release_id +' reboot='+ (reboot? 1 : 0));
    w3_el('id-msg-update').innerHTML =
-      w3_icon('', 'fa-refresh fa-spin', 24) + ' Installing release '+ select.value;
+      w3_icon('', 'fa-refresh fa-spin', 24) + ' Installing release '+ update_selected_release_id;
    if (reboot) w3_show_block('id-build-reboot');
 }
 

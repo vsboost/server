@@ -1818,15 +1818,17 @@ function fetchRawResponse(headers, path) {
                     }
                 }
             });
-            const releaseSelect = document.getElementById('id-update-release-select');
+            const releaseList = document.getElementById('id-update-release-list');
+            const releaseCards = Array.from(releaseList?.querySelectorAll('.ui-admin-release-card') || []);
+            const selectedRelease = releaseList?.querySelector('.ui-admin-release-card.is-selected');
             return {
                 actions,
                 policyControls,
                 releasePicker: {
-                    options: releaseSelect?.options.length,
-                    visibleRows: releaseSelect?.size,
-                    scrollable: releaseSelect?.scrollHeight > releaseSelect?.clientHeight,
-                    selected: releaseSelect?.value,
+                    cards: releaseCards.length,
+                    nativeListbox: !!document.getElementById('id-update-release-select'),
+                    scrollable: releaseList?.scrollHeight > releaseList?.clientHeight,
+                    selected: selectedRelease?.dataset.releaseId,
                     details: w3_el('id-update-release-details')?.textContent,
                     local: document.querySelector('.ui-admin-release-local')?.textContent
                 }
@@ -2705,20 +2707,19 @@ function fetchRawResponse(headers, path) {
             usageFileAudit.rawIpFound ||
             usageFileAudit.largest > 1024 * 1024)
             throw new Error(`invalid usage report files: ${JSON.stringify(usageFileAudit)}`);
-        if (adminUpgrade.actions.length !== 3 ||
+        if (adminUpgrade.actions.length !== 2 ||
             adminUpgrade.actions.some(row => row.display !== 'grid' ||
                 Math.abs(row.buttonWidth - 112) > 1 ||
                 Math.abs(row.rightGap) > 1 ||
                 row.centerDelta > 1) ||
             adminUpgrade.actions[0].labels.join(',') !== 'Check now' ||
             adminUpgrade.actions[1].labels.join(',') !== 'Browse releases' ||
-            adminUpgrade.actions[2].labels.join(',') !== 'Install,Install & reboot' ||
-            adminUpgrade.policyControls.length !== 3 ||
+            adminUpgrade.policyControls.length !== 1 ||
             adminUpgrade.policyControls.some(control =>
                 Math.abs(control.left - adminUpgrade.policyControls[0].left) > 1 ||
                 Math.abs(control.width - adminUpgrade.policyControls[0].width) > 1) ||
-            adminUpgrade.releasePicker.options !== 4 ||
-            adminUpgrade.releasePicker.visibleRows !== 3 ||
+            adminUpgrade.releasePicker.cards !== 4 ||
+            adminUpgrade.releasePicker.nativeListbox ||
             !adminUpgrade.releasePicker.scrollable ||
             adminUpgrade.releasePicker.selected !== '20260919' ||
             !adminUpgrade.releasePicker.details?.includes('newest.zip') ||
@@ -2804,9 +2805,9 @@ function fetchRawResponse(headers, path) {
             throw new Error(`invalid modern admin DX page: ${JSON.stringify(adminDX)}`);
         if (adminUpdate.heading !== 'Updates' ||
             adminUpdate.sections.join(',') !==
-                'Update status,Automatic updates,Manual actions,Release channel' ||
+                'Software status,Automatic updates,Check for updates,Install a selected release' ||
             !adminUpdate.statusHook ||
-            adminUpdate.actionButtons !== 5)
+            adminUpdate.actionButtons !== 3)
             throw new Error(`invalid modern admin Update page: ${JSON.stringify(adminUpdate)}`);
         if (adminNetwork.heading !== 'Network' ||
             adminNetwork.sections.join(',') !==
