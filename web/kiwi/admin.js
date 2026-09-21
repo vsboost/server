@@ -1332,6 +1332,28 @@ function update_result_progress(message)
       progress.innerHTML = update_escape_html(message || '');
 }
 
+function update_last_check_age(last_check, now)
+{
+   var checked_ms = Number(last_check) * 1000;
+   if (!isFinite(checked_ms)) return 'Unknown';
+
+   var elapsed = Math.max(0, Math.floor(((now === undefined)? Date.now() : now) - checked_ms) / 1000);
+   var amount, unit;
+   if (elapsed < 60) return 'just now';
+   if (elapsed < 60 * 60) {
+      amount = Math.floor(elapsed / 60);
+      unit = 'minute';
+   } else
+   if (elapsed < 24 * 60 * 60) {
+      amount = Math.floor(elapsed / (60 * 60));
+      unit = 'hour';
+   } else {
+      amount = Math.floor(elapsed / (24 * 60 * 60));
+      unit = 'day';
+   }
+   return amount +' '+ unit + (amount == 1? '' : 's') +' ago';
+}
+
 function update_channel_cb(path, idx, first)
 {
    admin_radio_YN_cb(path, idx, first);
@@ -1370,7 +1392,7 @@ function update_status_cb(status)
 {
    if (!w3_el('id-update-primary-action')) return;
    if (status.last_check)
-      w3_innerHTML('id-update-last-check', 'Last checked: '+ update_escape_html(status.last_check));
+      w3_innerHTML('id-update-last-check', 'Last checked: '+ update_last_check_age(status.last_check));
 
    if (status.message) {
       update_result_progress(status.message);

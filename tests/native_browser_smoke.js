@@ -1857,6 +1857,7 @@ function fetchJson(url) {
                 progressHeight: parseFloat(getComputedStyle(
                     w3_el('id-update-progress').querySelector('div')).height)
             };
+            const updateCheckTime = Math.floor(Date.now() / 1000) - 5 * 60;
             update_status_cb({
                 fail_reason: 0,
                 vmaj: 2026,
@@ -1867,7 +1868,7 @@ function fetchJson(url) {
                 release_filename: 'newest.zip',
                 release_changes: 'Newest release',
                 restart_required: false,
-                last_check: '2026-09-21 11:12:28'
+                last_check: updateCheckTime
             });
             const primaryInstall = {
                 label: primaryAction.textContent.trim(),
@@ -1875,7 +1876,9 @@ function fetchJson(url) {
                 result: w3_el('id-update-result').textContent,
                 progressVisible: getComputedStyle(
                     w3_el('id-update-progress')).display !== 'none',
-                lastCheck: w3_el('id-update-last-check').textContent
+                lastCheck: w3_el('id-update-last-check').textContent,
+                relativeDays: update_last_check_age(updateCheckTime - 2 * 24 * 60 * 60,
+                    updateCheckTime * 1000)
             };
             update_status_cb({ message: 'Downloading release package (primary attempt 1 of 3)' });
             const transferLabel = w3_el('id-update-result-progress').textContent;
@@ -2881,7 +2884,8 @@ function fetchJson(url) {
             adminUpgrade.primary.install.disabled ||
             adminUpgrade.primary.install.progressVisible ||
             !adminUpgrade.primary.install.result.includes('Newest release') ||
-            adminUpgrade.primary.install.lastCheck !== 'Last checked: 2026-09-21 11:12:28' ||
+            adminUpgrade.primary.install.lastCheck !== 'Last checked: 5 minutes ago' ||
+            adminUpgrade.primary.install.relativeDays !== '2 days ago' ||
             adminUpgrade.primary.restart !== 'Restart' ||
             adminUpgrade.primary.noNewUpdates.label !== 'Check for updates' ||
             !adminUpgrade.primary.noNewUpdates.resultHidden ||

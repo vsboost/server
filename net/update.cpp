@@ -126,26 +126,18 @@ static void report_result(conn_t* conn) {
     char* release_date_m = kiwi_str_encode((char*)pending_date.c_str());
     char* release_filename_m = kiwi_str_encode((char*)pending_filename.c_str());
     char* release_changes_m = kiwi_str_encode((char*)pending_changes.c_str());
-    char last_check[32] = "";
-    if (last_update_check != 0) {
-        struct tm tm;
-        if (localtime_r(&last_update_check, &tm) != NULL)
-            strftime(last_check, sizeof(last_check), "%Y-%m-%d %H:%M:%S", &tm);
-    }
-    char* last_check_m = kiwi_str_encode(last_check);
     send_msg(conn, false, "MSG update_cb="
                           "{\"f\":%d,\"p\":%d,\"i\":%d,\"r\":%d,\"g\":%d,\"rr\":%d,"
                           "\"v1\":%d,\"v2\":%d,\"p1\":%d,\"p2\":%d,\"d\":\"%s\",\"t\":\"%s\","
-                          "\"rd\":\"%s\",\"rf\":\"%s\",\"rc\":\"%s\",\"lc\":\"%s\"}",
+                          "\"rd\":\"%s\",\"rf\":\"%s\",\"rc\":\"%s\",\"lc\":%lld}",
              fail_reason, update_pending, update_in_progress, rx_chans, gps_chans,
              update_restart_required, version_maj, version_min, pending_maj, pending_min, date_m, time_m,
-             release_date_m, release_filename_m, release_changes_m, last_check_m);
+             release_date_m, release_filename_m, release_changes_m, (long long) last_update_check);
     kiwi_ifree(date_m, "date_m");
     kiwi_ifree(time_m, "time_m");
     kiwi_ifree(release_date_m, "release_date_m");
     kiwi_ifree(release_filename_m, "release_filename_m");
     kiwi_ifree(release_changes_m, "release_changes_m");
-    kiwi_ifree(last_check_m, "last_check_m");
 }
 
 static void report_progress(conn_t* conn, const char* msg) {
