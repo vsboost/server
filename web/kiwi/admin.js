@@ -1346,7 +1346,6 @@ function update_status_cb(status)
    if (status.message) {
       update_result_progress(status.message);
       if (status.message.indexOf('Update installed.') == 0) {
-         update_primary_set('installing');
          update_progress(false);
          ext_send('SET update_status');
       } else
@@ -1393,6 +1392,9 @@ function update_status_cb(status)
    } else {
       if (result_row) w3_hide(result_row);
       update_primary_set('check');
+      if (status.release_date)
+         w3_innerHTML('id-msg-update',
+            'No new updates. This receiver is running the same or newer software than the latest available release.');
    }
    update_progress(false);
 }

@@ -70,6 +70,26 @@ function fetchRawResponse(headers, path) {
     });
 }
 
+function fetchJson(url) {
+    return new Promise((resolve, reject) => {
+        http.get(url, response => {
+            const chunks = [];
+            response.on('data', chunk => chunks.push(chunk));
+            response.on('end', () => {
+                if (response.statusCode !== 200) {
+                    reject(new Error(`fixture request failed with ${response.statusCode}`));
+                    return;
+                }
+                try {
+                    resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        }).on('error', reject);
+    });
+}
+
 (async () => {
     const extensionPanelAudit = auditExtensionPanels();
     if (JSON.stringify(extensionPanelAudit.entries.map(entry => entry.name)) !==
@@ -1770,8 +1790,56 @@ function fetchRawResponse(headers, path) {
         });
         await clickAdminNav('id-nav-update');
         await adminPage.waitForSelector('.id-update-primary-action', { state: 'attached' });
+        const fixtureAction = adminPage.locator('.id-update-primary-action');
+        const fixtureProgress = adminPage.locator('.id-update-progress');
+        await adminPage.evaluate(() => update_primary_cb());
+        const fixtureCheckStart = {
+            label: (await fixtureAction.textContent()).trim(),
+            disabled: await fixtureAction.isDisabled(),
+            progressVisible: await fixtureProgress.evaluate(element =>
+                getComputedStyle(element).display !== 'none')
+        };
+        await adminPage.waitForFunction(() => {
+            const action = document.querySelector('.id-update-primary-action');
+            return action.textContent.trim() === 'Install' && !action.disabled;
+        }, null, { timeout: 30000 });
+        const fixtureCheck = {
+            label: (await fixtureAction.textContent()).trim(),
+            release: await adminPage.locator('.id-update-result').textContent()
+        };
+        await adminPage.evaluate(() => update_primary_cb());
+        const fixtureInstallStart = {
+            label: (await fixtureAction.textContent()).trim(),
+            disabled: await fixtureAction.isDisabled(),
+            progressVisible: await fixtureProgress.evaluate(element =>
+                getComputedStyle(element).display !== 'none')
+        };
+        await adminPage.waitForFunction(() =>
+            document.querySelector('.id-update-primary-action').textContent.trim() === 'Restart',
+            null, { timeout: 30000 });
+        const fixtureInstall = {
+            label: (await fixtureAction.textContent()).trim(),
+            result: await adminPage.locator('.id-update-result').textContent()
+        };
+        const updateFixtureRoot = process.env.WEBSDR_UPDATE_ROOT;
+        const updateFixtureUrl = process.env.WEBSDR_UPDATE_FIXTURE_URL;
+        if (!updateFixtureRoot || !updateFixtureUrl)
+            throw new Error('missing native update fixture configuration');
+        const fixtureUpdate = {
+            checkStart: fixtureCheckStart,
+            check: fixtureCheck,
+            installStart: fixtureInstallStart,
+            install: fixtureInstall,
+            stats: await fetchJson(new URL('stats', updateFixtureUrl).href),
+            releaseMarker: fs.readFileSync(path.join(updateFixtureRoot, 'release-marker.txt'), 'utf8'),
+            configSentinel: fs.readFileSync(path.join(updateFixtureRoot, 'config', 'sentinel.conf'), 'utf8'),
+            archiveCached: fs.existsSync(path.join(updateFixtureRoot, 'update', 'fixture-release.zip'))
+        };
         const adminUpgrade = await adminPage.evaluate(() => {
             const primaryAction = w3_el('id-update-primary-action');
+            update_primary_set('check');
+            update_progress(false);
+            w3_hide('id-update-result-row');
             const primaryRect = primaryAction.getBoundingClientRect();
             const headerRect = document.querySelector('.ui-admin-update-header').getBoundingClientRect();
             const primaryInitial = {
@@ -1779,7 +1847,8 @@ function fetchRawResponse(headers, path) {
                 disabled: primaryAction.disabled,
                 rightAligned: Math.abs(primaryRect.right - headerRect.right) <= 1
             };
-            update_primary_cb();
+            update_primary_set('checking');
+            update_progress(true, 'Checking for updates');
             const primaryChecking = {
                 label: primaryAction.textContent.trim(),
                 disabled: primaryAction.disabled,
@@ -1812,6 +1881,20 @@ function fetchRawResponse(headers, path) {
             const transferLabel = w3_el('id-update-result-progress').textContent;
             update_status_cb({ restart_required: true });
             const primaryRestart = primaryAction.textContent.trim();
+            update_status_cb({
+                fail_reason: 0,
+                vmaj: 2026,
+                vmin: 920,
+                pmaj: 2026,
+                pmin: 919,
+                release_date: '2026-09-19',
+                restart_required: false
+            });
+            const noNewUpdates = {
+                label: primaryAction.textContent.trim(),
+                resultHidden: getComputedStyle(w3_el('id-update-result-row')).display === 'none',
+                message: w3_el('id-msg-update').textContent
+            };
             const picker = w3_el('id-release-picker');
             const previousHidden = getComputedStyle(picker).display === 'none';
             update_previous_releases_cb();
@@ -1859,6 +1942,7 @@ function fetchRawResponse(headers, path) {
                     checking: primaryChecking,
                     install: primaryInstall,
                     restart: primaryRestart,
+                    noNewUpdates,
                     transferLabel
                 },
                 previous: {
@@ -2763,6 +2847,23 @@ function fetchRawResponse(headers, path) {
             usageFileAudit.rawIpFound ||
             usageFileAudit.largest > 1024 * 1024)
             throw new Error(`invalid usage report files: ${JSON.stringify(usageFileAudit)}`);
+        if (fixtureUpdate.checkStart.label !== 'Checking for updates' ||
+            !fixtureUpdate.checkStart.disabled ||
+            !fixtureUpdate.checkStart.progressVisible ||
+            fixtureUpdate.check.label !== 'Install' ||
+            !fixtureUpdate.check.release.includes('Fixture release') ||
+            fixtureUpdate.installStart.label !== 'Installing' ||
+            !fixtureUpdate.installStart.disabled ||
+            fixtureUpdate.installStart.progressVisible ||
+            fixtureUpdate.install.label !== 'Restart' ||
+            !fixtureUpdate.install.result.includes('Fixture release') ||
+            fixtureUpdate.stats.latest !== 2 ||
+            fixtureUpdate.stats.primary !== 3 ||
+            fixtureUpdate.stats.mirror !== 1 ||
+            fixtureUpdate.releaseMarker !== 'fixture release installed\n' ||
+            fixtureUpdate.configSentinel !== 'local configuration\n' ||
+            !fixtureUpdate.archiveCached)
+            throw new Error(`invalid update fixture flow: ${JSON.stringify(fixtureUpdate)}`);
         if (adminUpgrade.primary.initial.label !== 'Check for updates' ||
             adminUpgrade.primary.initial.disabled ||
             !adminUpgrade.primary.initial.rightAligned ||
@@ -2776,6 +2877,9 @@ function fetchRawResponse(headers, path) {
             !adminUpgrade.primary.install.result.includes('Newest release') ||
             adminUpgrade.primary.install.lastCheck !== 'Last checked: 2026-09-21 11:12:28' ||
             adminUpgrade.primary.restart !== 'Restart' ||
+            adminUpgrade.primary.noNewUpdates.label !== 'Check for updates' ||
+            !adminUpgrade.primary.noNewUpdates.resultHidden ||
+            !adminUpgrade.primary.noNewUpdates.message.includes('No new updates') ||
             !adminUpgrade.primary.transferLabel.includes('Downloading release package') ||
             !adminUpgrade.previous.hidden ||
             !adminUpgrade.previous.expanded ||
@@ -3004,6 +3108,7 @@ function fetchRawResponse(headers, path) {
             receiverResponsive, faxMobile, faxCollapse, extensionLayouts, drmPanelControls,
             panelToggle, adminFoundation, adminClassic, adminWarningThemes, adminResponsive,
             adminUsage, usageFileAudit,
+            fixtureUpdate,
             adminControl, adminConnect, adminConfig,
             adminWebpage, adminPublic, adminDX, adminUpdate, adminNetwork, adminGPS,
             adminLog, adminConsole, consoleOpenOrder, consoleANSI, adminExtensions, adminSecurity,

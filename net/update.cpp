@@ -59,7 +59,41 @@ static bool file_auto_download_oneshot = false;
 
 static const long update_download_timeout_s = 120;
 static const u4_t update_check_interval_s = 24 * 60 * 60;
-static const char* update_dir = "/media/mmcblk0p1/update";
+
+static const char* update_root()
+{
+#ifdef NATIVE_HARNESS
+    const char* root = getenv("WEBSDR_UPDATE_ROOT");
+    if (root != NULL && root[0] == '/')
+        return root;
+#endif
+    return "/media/mmcblk0p1";
+}
+
+static std::string update_dir()
+{
+    return std::string(update_root()) + "/update";
+}
+
+static const char* update_api_base()
+{
+#ifdef NATIVE_HARNESS
+    const char* base = getenv("WEBSDR_UPDATE_API_BASE");
+    if (base != NULL && strncmp(base, "http://127.0.0.1:", 17) == 0)
+        return base;
+#endif
+    return "https://www.rx-888.com/api";
+}
+
+static bool is_valid_release_url(const std::string& url)
+{
+#ifdef NATIVE_HARNESS
+    const char* base = update_api_base();
+    if (strncmp(base, "http://127.0.0.1:", 17) == 0)
+        return url.compare(0, strlen(base), base) == 0;
+#endif
+    return url.compare(0, 8, "https://") == 0;
+}
 
 enum fail_reason_e {
     FAIL_NONE = 0,
@@ -80,7 +114,7 @@ static void update_restart_required_refresh()
 {
     char running_digest[65], installed_digest[65];
     update_restart_required = sha256_file("/proc/self/exe", running_digest) &&
-                              sha256_file("/media/mmcblk0p1/websdr.bin", installed_digest) &&
+                              sha256_file((std::string(update_root()) + "/websdr.bin").c_str(), installed_digest) &&
                               strcmp(running_digest, installed_digest) != 0;
 }
 
@@ -226,12 +260,12 @@ static bool release_parse(const char* json, release_t* release)
         !release_date_to_version(release->date, &release->maj, &release->min) ||
         !is_hex_sha256(release->sha256) ||
         !is_safe_release_filename(release->filename) ||
-        release->link.compare(0, 8, "https://") != 0)
+        !is_valid_release_url(release->link))
         return false;
 
     int mirror = json_object_value(json, tok, download, "mirror");
     if (mirror >= 0 && (!json_string_value(json, tok, mirror, &release->mirror) ||
-                       release->mirror.compare(0, 8, "https://") != 0))
+                       !is_valid_release_url(release->mirror)))
         return false;
 
     int changes = json_object_value(json, tok, release_object, "changes");
@@ -323,7 +357,7 @@ static bool archive_paths_safe(const std::string& archive)
 
 static bool download_release(conn_t* conn, bool report, const release_t& release)
 {
-    std::string archive = std::string(update_dir) + "/" + release.filename;
+    std::string archive = update_dir() + "/" + release.filename;
     struct stat st;
     if (stat(archive.c_str(), &st) == 0 && sha256_file_matches(archive.c_str(), release.sha256)) {
         if (report) report_progress(conn, "Using previously downloaded verified release package");
@@ -367,12 +401,13 @@ static int update_build(conn_t* conn, bool report, const release_t& release)
 {
     sd_enable(true);
     int status = EXIT_FAILURE;
-    std::string archive = std::string(update_dir) + "/" + release.filename;
+    std::string archive = update_dir() + "/" + release.filename;
     std::string verify_command = "unzip -tq " + archive + " >/dev/null";
-    std::string install_command = "unzip -oq " + archive + " -d /media/mmcblk0p1 -x 'config/*'";
+    std::string install_command = "unzip -oq " + archive + " -d " + update_root() + " -x 'config/*'";
 
-    if (mkdir(update_dir, 0755) != 0 && errno != EEXIST) {
-        lprintf("UPDATE: unable to create %s: %s\n", update_dir, strerror(errno));
+    std::string dir = update_dir();
+    if (mkdir(dir.c_str(), 0755) != 0 && errno != EEXIST) {
+        lprintf("UPDATE: unable to create %s: %s\n", dir.c_str(), strerror(errno));
         fail_reason = FAIL_INSTALL;
         goto exit;
     }
@@ -432,10 +467,10 @@ static void _update_task(void* param) {
 
     if (report) report_progress(conn, "Getting latest release information");
     if (force_release)
-        metadata_url = "https://www.rx-888.com/api/releases/" + requested_release_date;
+        metadata_url = std::string(update_api_base()) + "/releases/" + requested_release_date;
     else
-        metadata_url = alpha? "https://www.rx-888.com/api/releases/latest" :
-                              "https://www.rx-888.com/api/releases/latest?stable=true";
+        metadata_url = std::string(update_api_base()) + "/releases/latest" +
+                       (alpha? "" : "?stable=true");
     metadata = curl_get(metadata_url.c_str(), 15, &status);
 
     if (metadata == NULL || status != 0 || !release_parse(kstr_sp(metadata), &release)) {
@@ -579,7 +614,8 @@ void update_send_release_list(conn_t* conn)
 {
     assert(conn != NULL);
     int status;
-    kstr_t* releases = curl_get("https://www.rx-888.com/api/releases", 20, &status);
+    std::string releases_url = std::string(update_api_base()) + "/releases";
+    kstr_t* releases = curl_get(releases_url.c_str(), 20, &status);
     if (releases == NULL || status != 0) {
         if (releases) kstr_free(releases);
         send_msg_encoded(conn, "MSG", "release_list_cb", "%s",
@@ -596,15 +632,16 @@ void update_send_release_list(conn_t* conn)
     }
 
     std::string response = "{\"local\":[";
-    DIR* dir = opendir(update_dir);
-    if (dir != NULL) {
+    std::string dir = update_dir();
+    DIR* update_dp = opendir(dir.c_str());
+    if (update_dp != NULL) {
         bool first = true;
         struct dirent* entry;
-        while ((entry = readdir(dir)) != NULL) {
+        while ((entry = readdir(update_dp)) != NULL) {
             std::string filename = entry->d_name;
             if (!is_safe_release_filename(filename))
                 continue;
-            std::string path = std::string(update_dir) + "/" + filename;
+            std::string path = dir + "/" + filename;
             struct stat st;
             if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
                 continue;
@@ -613,7 +650,7 @@ void update_send_release_list(conn_t* conn)
             response += "\"" + filename + "\"";
             first = false;
         }
-        closedir(dir);
+        closedir(update_dp);
     }
     response += "],";
     response += json + 1;
