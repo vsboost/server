@@ -37,6 +37,7 @@ Boston, MA  02110-1301, USA.
 
 #include <types.h>
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <limits.h>
 #include <unistd.h>
@@ -47,13 +48,13 @@ Boston, MA  02110-1301, USA.
 static bool update_pending = false, update_task_running = false, update_in_progress = false;
 static int pending_maj = -1, pending_min = -1;
 static std::string pending_date, pending_filename, pending_changes;
+static std::string requested_release_date;
 
 static bool file_auto_download_check = false;
 static bool file_auto_download_oneshot = false;
 
 static const long update_download_timeout_s = 120;
 static const char* update_dir = "/media/mmcblk0p1/update";
-static const char* update_zip = "/media/mmcblk0p1/update/release.zip";
 
 enum fail_reason_e {
     FAIL_NONE = 0,
@@ -164,6 +165,18 @@ static bool is_hex_sha256(const std::string& sha256)
     return true;
 }
 
+static bool is_safe_release_filename(const std::string& filename)
+{
+    if (filename.size() < 5 || filename.substr(filename.size() - 4) != ".zip")
+        return false;
+    for (size_t i = 0; i < filename.size(); i++) {
+        unsigned char ch = filename[i];
+        if (!isalnum(ch) && ch != '.' && ch != '_' && ch != '-')
+            return false;
+    }
+    return true;
+}
+
 static bool release_parse(const char* json, release_t* release)
 {
     jsmn_parser parser;
@@ -173,8 +186,12 @@ static bool release_parse(const char* json, release_t* release)
     if (ntok < 1 || tok[0].type != JSMN_OBJECT)
         return false;
 
-    int downloads = json_object_value(json, tok, 0, "downloads");
-    if (!json_string_value(json, tok, json_object_value(json, tok, 0, "date"), &release->date) ||
+    int release_object = json_object_value(json, tok, 0, "release");
+    if (release_object < 0)
+        release_object = 0;
+
+    int downloads = json_object_value(json, tok, release_object, "downloads");
+    if (!json_string_value(json, tok, json_object_value(json, tok, release_object, "date"), &release->date) ||
         downloads < 0 || tok[downloads].type != JSMN_ARRAY || tok[downloads].size < 1)
         return false;
 
@@ -183,15 +200,18 @@ static bool release_parse(const char* json, release_t* release)
         !json_string_value(json, tok, json_object_value(json, tok, download, "filename"), &release->filename) ||
         !json_string_value(json, tok, json_object_value(json, tok, download, "sha256"), &release->sha256) ||
         !json_string_value(json, tok, json_object_value(json, tok, download, "link"), &release->link) ||
-        !json_string_value(json, tok, json_object_value(json, tok, download, "mirror"), &release->mirror) ||
         !release_date_to_version(release->date, &release->maj, &release->min) ||
         !is_hex_sha256(release->sha256) ||
-        release->filename.find('/') != std::string::npos ||
-        release->filename.size() < 5 || release->filename.substr(release->filename.size() - 4) != ".zip" ||
-        release->link.compare(0, 8, "https://") != 0 || release->mirror.compare(0, 8, "https://") != 0)
+        !is_safe_release_filename(release->filename) ||
+        release->link.compare(0, 8, "https://") != 0)
         return false;
 
-    int changes = json_object_value(json, tok, 0, "changes");
+    int mirror = json_object_value(json, tok, download, "mirror");
+    if (mirror >= 0 && (!json_string_value(json, tok, mirror, &release->mirror) ||
+                       release->mirror.compare(0, 8, "https://") != 0))
+        return false;
+
+    int changes = json_object_value(json, tok, release_object, "changes");
     if (changes >= 0 && tok[changes].type == JSMN_ARRAY) {
         int pos = changes + 1;
         for (int i = 0; i < tok[changes].size; i++) {
@@ -234,9 +254,10 @@ static bool sha256_file_matches(const char* filename, const std::string& expecte
     return strcasecmp(actual, expected.c_str()) == 0;
 }
 
-static bool archive_paths_safe()
+static bool archive_paths_safe(const std::string& archive)
 {
-    FILE* fp = popen("unzip -Z1 /media/mmcblk0p1/update/release.zip", "r");
+    std::string command = "unzip -Z1 " + archive;
+    FILE* fp = popen(command.c_str(), "r");
     if (fp == NULL)
         return false;
 
@@ -272,16 +293,19 @@ static bool archive_paths_safe()
 
 static bool download_release(conn_t* conn, bool report, const release_t& release)
 {
+    std::string archive = std::string(update_dir) + "/" + release.filename;
     struct stat st;
-    if (stat(update_zip, &st) == 0 && sha256_file_matches(update_zip, release.sha256)) {
+    if (stat(archive.c_str(), &st) == 0 && sha256_file_matches(archive.c_str(), release.sha256)) {
         if (report) report_progress(conn, "Using previously downloaded verified release package");
         return true;
     }
-    if (stat(update_zip, &st) == 0 || errno != ENOENT)
-        unlink(update_zip);
+    if (stat(archive.c_str(), &st) == 0 || errno != ENOENT)
+        unlink(archive.c_str());
 
     const std::string urls[] = { release.link, release.mirror };
     for (int source = 0; source < ARRAY_LEN(urls); source++) {
+        if (urls[source].empty())
+            continue;
         for (int attempt = 1; attempt <= 3; attempt++) {
             if (report) {
                 char* msg;
@@ -292,17 +316,17 @@ static bool download_release(conn_t* conn, bool report, const release_t& release
                 kiwi_asfree(msg);
             }
 
-            int status = curl_get_file_resume(urls[source].c_str(), update_zip, update_download_timeout_s);
+            int status = curl_get_file_resume(urls[source].c_str(), archive.c_str(), update_download_timeout_s);
             if (status == 0) {
-                if (sha256_file_matches(update_zip, release.sha256))
+                if (sha256_file_matches(archive.c_str(), release.sha256))
                     return true;
                 lprintf("UPDATE: downloaded ZIP checksum did not match on %s attempt %d\n",
                         source == 0? "primary" : "mirror", attempt);
-                unlink(update_zip);
+                unlink(archive.c_str());
             }
             else if (status == -2) {
                 lprintf("UPDATE: stored partial ZIP cannot be resumed; restarting transfer\n");
-                unlink(update_zip);
+                unlink(archive.c_str());
             }
         }
     }
@@ -313,6 +337,9 @@ static int update_build(conn_t* conn, bool report, const release_t& release)
 {
     sd_enable(true);
     int status = EXIT_FAILURE;
+    std::string archive = std::string(update_dir) + "/" + release.filename;
+    std::string verify_command = "unzip -tq " + archive + " >/dev/null";
+    std::string install_command = "unzip -oq " + archive + " -d /media/mmcblk0p1 -x 'config/*'";
 
     if (mkdir(update_dir, 0755) != 0 && errno != EEXIST) {
         lprintf("UPDATE: unable to create %s: %s\n", update_dir, strerror(errno));
@@ -326,14 +353,14 @@ static int update_build(conn_t* conn, bool report, const release_t& release)
     }
 
     if (report) report_progress(conn, "Verifying release archive");
-    if (!archive_paths_safe() || system("unzip -tq /media/mmcblk0p1/update/release.zip >/dev/null") != 0) {
+    if (!archive_paths_safe(archive) || system(verify_command.c_str()) != 0) {
         lprintf("UPDATE: release archive is invalid or contains unsafe paths\n");
         fail_reason = FAIL_INSTALL;
         goto exit;
     }
-
     if (report) report_progress(conn, "Installing release to SD card (preserving config)");
-    if (system("unzip -oq /media/mmcblk0p1/update/release.zip -d /media/mmcblk0p1 -x 'config/*'") != 0) {
+    if (report) report_progress(conn, "Installing release to SD card (preserving config)");
+    if (system(install_command.c_str()) != 0) {
         lprintf("UPDATE: unable to extract release archive\n");
         fail_reason = FAIL_INSTALL;
         goto exit;
@@ -348,13 +375,18 @@ exit:
 static void _update_task(void* param) {
     conn_t* conn = (conn_t*)FROM_VOID_PARAM(param);
     bool force_check = (conn && conn->update_check == FORCE_CHECK);
-    bool force_build = (conn && (conn->update_check == FORCE_BUILD || conn->update_check == FORCE_BUILD_REBOOT));
-    bool force_build_reboot = (conn && conn->update_check == FORCE_BUILD_REBOOT);
+    bool force_release = (conn && (conn->update_check == FORCE_RELEASE_BUILD ||
+                                   conn->update_check == FORCE_RELEASE_BUILD_REBOOT));
+    bool force_build = (conn && (conn->update_check == FORCE_BUILD || conn->update_check == FORCE_BUILD_REBOOT ||
+                                 force_release));
+    bool force_build_reboot = (conn && (conn->update_check == FORCE_BUILD_REBOOT ||
+                                        conn->update_check == FORCE_RELEASE_BUILD_REBOOT));
     bool report = (force_check || force_build);
     bool release_changed, update_install;
     int status;
     kstr_t* metadata = NULL;
     release_t release;
+    std::string metadata_url;
     fail_reason = FAIL_NONE;
 
     update_in_progress = true;
@@ -382,8 +414,12 @@ static void _update_task(void* param) {
     }
 
     if (report) report_progress(conn, "Getting latest release information");
-    metadata = curl_get(alpha? "https://www.rx-888.com/api/releases/latest" :
-                        "https://www.rx-888.com/api/releases/latest?stable=true", 15, &status);
+    if (force_release)
+        metadata_url = "https://www.rx-888.com/api/releases/" + requested_release_date;
+    else
+        metadata_url = alpha? "https://www.rx-888.com/api/releases/latest" :
+                              "https://www.rx-888.com/api/releases/latest?stable=true";
+    metadata = curl_get(metadata_url.c_str(), 15, &status);
 
     if (metadata == NULL || status != 0 || !release_parse(kstr_sp(metadata), &release)) {
         lprintf("UPDATE: failed to get valid latest release information from server\n");
@@ -467,6 +503,7 @@ common_return:
     }
 
     if (conn) conn->update_check = WAIT_UNTIL_NO_USERS; // restore default
+    requested_release_date.clear();
     update_pending = update_task_running = update_in_progress = false;
 }
 
@@ -514,6 +551,73 @@ void check_for_update(update_check_e type, conn_t* conn) {
         update_task_running = true;
         CreateTask(_update_task, TO_VOID_PARAM(conn), ADMIN_PRIORITY);
     }
+}
+
+void update_send_release_list(conn_t* conn)
+{
+    assert(conn != NULL);
+    int status;
+    kstr_t* releases = curl_get("https://www.rx-888.com/api/releases", 20, &status);
+    if (releases == NULL || status != 0) {
+        if (releases) kstr_free(releases);
+        send_msg_encoded(conn, "MSG", "release_list_cb", "%s",
+                         "{\"error\":\"Unable to retrieve release list\"}");
+        return;
+    }
+
+    const char* json = kstr_sp(releases);
+    if (json[0] != '{') {
+        kstr_free(releases);
+        send_msg_encoded(conn, "MSG", "release_list_cb", "%s",
+                         "{\"error\":\"Invalid release list response\"}");
+        return;
+    }
+
+    std::string response = "{\"local\":[";
+    DIR* dir = opendir(update_dir);
+    if (dir != NULL) {
+        bool first = true;
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != NULL) {
+            std::string filename = entry->d_name;
+            if (!is_safe_release_filename(filename))
+                continue;
+            std::string path = std::string(update_dir) + "/" + filename;
+            struct stat st;
+            if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+                continue;
+            if (!first)
+                response += ",";
+            response += "\"" + filename + "\"";
+            first = false;
+        }
+        closedir(dir);
+    }
+    response += "],";
+    response += json + 1;
+
+    send_msg_encoded(conn, "MSG", "release_list_cb", "%s", response.c_str());
+    kstr_free(releases);
+}
+
+void update_install_release(const char* date, bool reboot, conn_t* conn)
+{
+    assert(conn != NULL);
+    if (strlen(date) != 8) {
+        lprintf("UPDATE: invalid requested release date\n");
+        report_progress(conn, "Invalid release selection.");
+        return;
+    }
+    for (const char* p = date; *p != '\0'; p++) {
+        if (!isdigit((unsigned char) *p)) {
+            lprintf("UPDATE: invalid requested release date\n");
+            report_progress(conn, "Invalid release selection.");
+            return;
+        }
+    }
+
+    requested_release_date = date;
+    check_for_update(reboot? FORCE_RELEASE_BUILD_REBOOT : FORCE_RELEASE_BUILD, conn);
 }
 
 static bool update_on_startup = true;

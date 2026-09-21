@@ -1275,6 +1275,10 @@ function update_html()
             w3_button('w3-aqua w3-margin', 'Check now', 'update_check_now_cb')
          ),
          w3_div('w3-valign ui-admin-update-action',
+            '<b>Install a selected release</b>' +
+            w3_button('w3-aqua w3-margin', 'Browse releases', 'update_release_list_now_cb')
+         ),
+         w3_div('w3-valign ui-admin-update-action',
             '<b>Force software reinstall</b>' +
             w3_div('ui-admin-update-action-buttons',
                w3_button('w3-aqua w3-margin', 'Install', 'update_build_now_cb') +
@@ -1298,7 +1302,8 @@ function update_html()
          admin_section('Update status', 'Current check, installation and restart activity', status,
             'ui-admin-section-wide') +
          admin_section('Automatic updates', 'Set the routine update and post-restart policy', policy) +
-         admin_section('Manual actions', 'Check for a release or reinstall the current software', actions) +
+         admin_section('Manual actions', 'Check, select, or reinstall software releases',
+            actions + w3_div('id-release-picker ui-admin-release-picker w3-margin-T-16')) +
          admin_section('Release channel', 'Balance stability against early access to changes', channel,
             'ui-admin-section-wide') +
       '</div>';
@@ -1325,6 +1330,103 @@ function update_build_reboot_now_cb(id, idx)
 	ext_send('SET force_check=1 force_build=1 force_reboot=1');
 	w3_el('id-msg-update').innerHTML = w3_icon('', 'fa-refresh fa-spin', 24) + 'Updating';
    w3_show_block('id-build-reboot');
+}
+
+var update_release_catalog = {};
+
+function update_escape_html(value)
+{
+   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function update_release_list_now_cb(id, idx)
+{
+   var picker = w3_el('id-release-picker');
+   if (picker) picker.innerHTML = w3_icon('', 'fa-refresh fa-spin', 20) + ' Loading releases...';
+   ext_send('SET release_list');
+}
+
+function update_release_list_cb(response)
+{
+   var picker = w3_el('id-release-picker');
+   if (!picker) return;
+   if (!response || response.error || !response.releases) {
+      picker.innerHTML = '<span class="w3-text-red">'+
+         update_escape_html(response?.error || 'Unable to retrieve release list.') +'</span>';
+      return;
+   }
+
+   var local = Array.isArray(response.local)? response.local : [];
+   update_release_catalog = {};
+   var ids = Object.keys(response.releases).filter(function(id) {
+      var release = response.releases[id];
+      if (!release || !Array.isArray(release.downloads) || !release.downloads.length)
+         return false;
+      release.local = local.includes(release.downloads[0].filename);
+      update_release_catalog[id] = release;
+      return /^\d{8}$/.test(id);
+   }).sort().reverse();
+
+   if (!ids.length) {
+      picker.innerHTML = '<span class="w3-text-red">No installable releases were returned.</span>';
+      return;
+   }
+
+   picker.innerHTML =
+      '<label for="id-update-release-select">Choose a release</label>' +
+      '<select id="id-update-release-select" class="w3-select w3-border" size="3"></select>' +
+      w3_div('id-update-release-details w3-margin-T-8');
+   var select = w3_el('id-update-release-select');
+   ids.forEach(function(id) {
+      var release = update_release_catalog[id];
+      var option = document.createElement('option');
+      option.value = id;
+      option.textContent = (release.local? 'SD card: ' : '') + (release.date || id);
+      select.appendChild(option);
+   });
+   select.value = ids[0];
+   select.onchange = update_release_select_cb;
+   update_release_select_cb();
+}
+
+function update_release_select_cb()
+{
+   var select = w3_el('id-update-release-select');
+   var details = w3_el('id-update-release-details');
+   if (!select || !details) return;
+
+   var id = select.value;
+   var release = update_release_catalog[id];
+   var download = release?.downloads?.[0];
+   if (!release || !download) {
+      details.innerHTML = '<span class="w3-text-red">Selected release is unavailable.</span>';
+      return;
+   }
+
+   var changes = Array.isArray(release.changes)? release.changes.map(function(change) {
+      return '<li>'+ update_escape_html(change) +'</li>';
+   }).join('') : '';
+   details.innerHTML =
+      '<div><b>'+ update_escape_html(release.date || id) +'</b> — '+
+         update_escape_html(download.filename || '') +'</div>' +
+      (release.local? '<div class="ui-admin-release-local">Available on SD card</div>' : '') +
+      (changes? '<ul>'+ changes +'</ul>' : '') +
+      w3_div('ui-admin-update-action-buttons',
+         '<button id="id-update-release-install" class="w3-button w3-aqua">Install</button>' +
+         '<button id="id-update-release-reboot" class="w3-button w3-red">Install &amp; reboot</button>');
+   w3_el('id-update-release-install').onclick = function() { update_release_install_cb(false); };
+   w3_el('id-update-release-reboot').onclick = function() { update_release_install_cb(true); };
+}
+
+function update_release_install_cb(reboot)
+{
+   var select = w3_el('id-update-release-select');
+   if (!select || !/^\d{8}$/.test(select.value)) return;
+   ext_send('SET release_install date='+ select.value +' reboot='+ (reboot? 1 : 0));
+   w3_el('id-msg-update').innerHTML =
+      w3_icon('', 'fa-refresh fa-spin', 24) + ' Installing release '+ select.value;
+   if (reboot) w3_show_block('id-build-reboot');
 }
 
 ////////////////////////////////
@@ -3797,6 +3899,10 @@ function admin_msg(param)
       case "gps_az_el_history_cb":
          var gps_az_el = kiwi_JSON_parse('gps_az_el_history_cb', decodeURIComponent(param[1]));
          if (gps_az_el) w3_call('gps_az_el_history_cb', gps_az_el);
+         break;
+
+      case "release_list_cb":
+         update_release_list_cb(kiwi_JSON_parse('release_list_cb', decodeURIComponent(param[1])));
          break;
 
 		case "dx_size":

@@ -672,6 +672,21 @@ void c2s_admin(void* param) {
                 continue;
             }
 
+            char* release_date = NULL;
+            int release_reboot;
+            i = sscanf(cmd, "SET release_install date=%8ms reboot=%d", &release_date, &release_reboot);
+            if (i == 2) {
+                update_install_release(release_date, release_reboot != 0, conn);
+                kiwi_asfree(release_date);
+                continue;
+            }
+            kiwi_asfree(release_date);
+
+            if (strcmp(cmd, "SET release_list") == 0) {
+                update_send_release_list(conn);
+                continue;
+            }
+
 
 ////////////////////////////////
 // backup
