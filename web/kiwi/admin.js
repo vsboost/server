@@ -1356,9 +1356,11 @@ function update_release_list_cb(response)
    }
 
    picker.innerHTML =
-      '<div id="id-update-release-list" class="ui-admin-release-list" role="listbox" ' +
-         'aria-label="Available releases"></div>' +
-      '<div id="id-update-release-details" class="ui-admin-release-details"></div>';
+      '<div class="ui-admin-release-picker-content">' +
+         '<div id="id-update-release-list" class="ui-admin-release-list" role="listbox" ' +
+            'aria-label="Available releases"></div>' +
+         '<div id="id-update-release-details" class="ui-admin-release-details"></div>' +
+      '</div>';
    var list = w3_el('id-update-release-list');
    ids.forEach(function(id) {
       var release = update_release_catalog[id];

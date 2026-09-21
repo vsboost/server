@@ -1819,8 +1819,11 @@ function fetchRawResponse(headers, path) {
                 }
             });
             const releaseList = document.getElementById('id-update-release-list');
+            const releaseDetails = document.getElementById('id-update-release-details');
             const releaseCards = Array.from(releaseList?.querySelectorAll('.ui-admin-release-card') || []);
             const selectedRelease = releaseList?.querySelector('.ui-admin-release-card.is-selected');
+            const listRect = releaseList.getBoundingClientRect();
+            const detailsRect = releaseDetails.getBoundingClientRect();
             return {
                 actions,
                 policyControls,
@@ -1830,10 +1833,23 @@ function fetchRawResponse(headers, path) {
                     scrollable: releaseList?.scrollHeight > releaseList?.clientHeight,
                     selected: selectedRelease?.dataset.releaseId,
                     details: w3_el('id-update-release-details')?.textContent,
-                    local: document.querySelector('.ui-admin-release-local')?.textContent
+                    local: document.querySelector('.ui-admin-release-local')?.textContent,
+                    desktopFlow: listRect.left < detailsRect.left &&
+                        Math.abs(listRect.top - detailsRect.top) <= 1
                 }
             };
         });
+        await adminPage.setViewportSize({ width: 390, height: 844 });
+        const adminUpgradeMobile = await adminPage.evaluate(() => {
+            const listRect = document.getElementById('id-update-release-list').getBoundingClientRect();
+            const detailsRect = document.getElementById('id-update-release-details').getBoundingClientRect();
+            return {
+                verticalFlow: detailsRect.top >= listRect.bottom &&
+                    Math.abs(listRect.left - detailsRect.left) <= 1,
+                documentOverflow: document.documentElement.scrollWidth > window.innerWidth + 1
+            };
+        });
+        await adminPage.setViewportSize({ width: 1440, height: 1000 });
         await clickAdminNav('id-nav-control');
         await adminPage.waitForTimeout(100);
         const adminControl = await adminPage.evaluate(() => {
@@ -2723,7 +2739,10 @@ function fetchRawResponse(headers, path) {
             !adminUpgrade.releasePicker.scrollable ||
             adminUpgrade.releasePicker.selected !== '20260919' ||
             !adminUpgrade.releasePicker.details?.includes('newest.zip') ||
-            adminUpgrade.releasePicker.local !== 'Available on SD card')
+            adminUpgrade.releasePicker.local !== 'Available on SD card' ||
+            !adminUpgrade.releasePicker.desktopFlow ||
+            !adminUpgradeMobile.verticalFlow ||
+            adminUpgradeMobile.documentOverflow)
             throw new Error(`invalid admin upgrade actions: ${JSON.stringify(adminUpgrade)}`);
         if (adminControl.heading !== 'Receiver control' ||
             adminControl.sections.join(',') !==

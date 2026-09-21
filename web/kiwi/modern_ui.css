@@ -2292,6 +2292,13 @@
    padding-top: var(--ui-space-3);
 }
 
+.ui-modern .ui-admin-release-picker-content {
+   display: grid;
+   grid-template-columns: minmax(200px, 0.85fr) minmax(0, 1.15fr);
+   gap: var(--ui-space-4);
+   align-items: start;
+}
+
 .ui-modern .ui-admin-release-list {
    display: grid;
    gap: var(--ui-space-2);
@@ -2338,7 +2345,7 @@
 }
 
 .ui-modern .ui-admin-release-details {
-   margin-top: var(--ui-space-3);
+   min-width: 0;
 }
 
 .ui-modern .ui-admin-release-picker ul {
@@ -3424,6 +3431,14 @@
 
    .ui-modern .ui-admin-update-action button {
       width: 100%;
+   }
+
+   .ui-modern .ui-admin-release-picker-content {
+      grid-template-columns: minmax(0, 1fr);
+   }
+
+   .ui-modern .ui-admin-release-details {
+      margin-top: var(--ui-space-3);
    }
 
    .ui-modern .ui-admin-runtime-grid,
