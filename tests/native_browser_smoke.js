@@ -1769,32 +1769,54 @@ function fetchRawResponse(headers, path) {
             };
         });
         await clickAdminNav('id-nav-update');
+        await adminPage.waitForSelector('.id-update-primary-action', { state: 'attached' });
         const adminUpgrade = await adminPage.evaluate(() => {
-            const rows = Array.from(document.querySelectorAll('.ui-admin-update-action'));
-            const actions = rows.map(row => {
-                const button = row.querySelector('button');
-                const rowRect = row.getBoundingClientRect();
-                const actionControl = row.querySelector('.ui-admin-update-action-buttons') || button;
-                const controlRect = actionControl.getBoundingClientRect();
-                return {
-                    labels: Array.from(row.querySelectorAll('button')).map(button => button.textContent.trim()),
-                    display: getComputedStyle(row).display,
-                    buttonWidth: button.getBoundingClientRect().width,
-                    rightGap: rowRect.right - controlRect.right,
-                    centerDelta: Math.abs(
-                        (rowRect.top + rowRect.height / 2) -
-                        (controlRect.top + controlRect.height / 2))
-                };
+            const primaryAction = w3_el('id-update-primary-action');
+            const primaryRect = primaryAction.getBoundingClientRect();
+            const headerRect = document.querySelector('.ui-admin-update-header').getBoundingClientRect();
+            const primaryInitial = {
+                label: primaryAction.textContent.trim(),
+                disabled: primaryAction.disabled,
+                rightAligned: Math.abs(primaryRect.right - headerRect.right) <= 1
+            };
+            update_primary_cb();
+            const primaryChecking = {
+                label: primaryAction.textContent.trim(),
+                disabled: primaryAction.disabled,
+                progressVisible: getComputedStyle(
+                    w3_el('id-update-progress')).display !== 'none',
+                progressHeight: parseFloat(getComputedStyle(
+                    w3_el('id-update-progress').querySelector('div')).height)
+            };
+            update_status_cb({
+                fail_reason: 0,
+                vmaj: 2026,
+                vmin: 101,
+                pmaj: 2026,
+                pmin: 919,
+                release_date: '2026-09-19',
+                release_filename: 'newest.zip',
+                release_changes: 'Newest release',
+                restart_required: false,
+                last_check: '2026-09-21 11:12:28'
             });
-            const policyControls = Array.from(
-                document.querySelectorAll('.ui-admin-update-policy-row'))
-                .map(row => {
-                    const control = row.querySelector('.w3-show-inline-new > div');
-                    const rect = control.getBoundingClientRect();
-                    return { left: rect.left, width: rect.width };
-                });
+            const primaryInstall = {
+                label: primaryAction.textContent.trim(),
+                disabled: primaryAction.disabled,
+                result: w3_el('id-update-result').textContent,
+                progressVisible: getComputedStyle(
+                    w3_el('id-update-progress')).display !== 'none',
+                lastCheck: w3_el('id-update-last-check').textContent
+            };
+            update_status_cb({ message: 'Downloading release package (primary attempt 1 of 3)' });
+            const transferLabel = w3_el('id-update-result-progress').textContent;
+            update_status_cb({ restart_required: true });
+            const primaryRestart = primaryAction.textContent.trim();
+            const picker = w3_el('id-release-picker');
+            const previousHidden = getComputedStyle(picker).display === 'none';
+            update_previous_releases_cb();
             update_release_list_cb({
-                local: ['newest.zip'],
+                local: ['newest.zip', 'second.zip', 'third.zip', 'fourth.zip'],
                 releases: {
                     '20260919': {
                         date: '2026-09-19',
@@ -1815,23 +1837,37 @@ function fetchRawResponse(headers, path) {
                         date: '2026-02-05',
                         changes: ['Fourth release'],
                         downloads: [{ filename: 'fourth.zip' }]
+                    },
+                    '20250101': {
+                        date: '2025-01-01',
+                        changes: ['Remote-only release'],
+                        downloads: [{ filename: 'remote.zip' }]
                     }
                 }
             });
-            const releaseList = document.getElementById('id-update-release-list');
-            const releaseDetails = document.getElementById('id-update-release-details');
-            const releaseActions = document.getElementById('id-update-release-actions');
+            const releaseList = w3_el('id-update-release-list');
+            const releaseDetails = w3_el('id-update-release-details');
+            const releaseActions = w3_el('id-update-release-actions');
             const releaseCards = Array.from(releaseList?.querySelectorAll('.ui-admin-release-card') || []);
             const selectedRelease = releaseList?.querySelector('.ui-admin-release-card.is-selected');
             const listRect = releaseList.getBoundingClientRect();
             const detailsRect = releaseDetails.getBoundingClientRect();
             const actionsRect = releaseActions.getBoundingClientRect();
             return {
-                actions,
-                policyControls,
+                primary: {
+                    initial: primaryInitial,
+                    checking: primaryChecking,
+                    install: primaryInstall,
+                    restart: primaryRestart,
+                    transferLabel
+                },
+                previous: {
+                    hidden: previousHidden,
+                    expanded: getComputedStyle(picker).display !== 'none'
+                },
                 releasePicker: {
                     cards: releaseCards.length,
-                    nativeListbox: !!document.getElementById('id-update-release-select'),
+                    nativeListbox: !!w3_el('id-update-release-select'),
                     scrollable: releaseList?.scrollHeight > releaseList?.clientHeight,
                     selected: selectedRelease?.dataset.releaseId,
                     details: w3_el('id-update-release-details')?.textContent,
@@ -1839,15 +1875,15 @@ function fetchRawResponse(headers, path) {
                     desktopFlow: listRect.left < detailsRect.left &&
                         Math.abs(listRect.top - detailsRect.top) <= 1,
                     separateActions: !releaseDetails.contains(
-                        document.getElementById('id-update-release-install')) &&
+                        w3_el('id-update-release-install')) &&
                         actionsRect.top >= Math.max(listRect.bottom, detailsRect.bottom)
                 }
             };
         });
         await adminPage.setViewportSize({ width: 390, height: 844 });
         const adminUpgradeMobile = await adminPage.evaluate(() => {
-            const listRect = document.getElementById('id-update-release-list').getBoundingClientRect();
-            const detailsRect = document.getElementById('id-update-release-details').getBoundingClientRect();
+            const listRect = w3_el('id-update-release-list').getBoundingClientRect();
+            const detailsRect = w3_el('id-update-release-details').getBoundingClientRect();
             return {
                 verticalFlow: detailsRect.top >= listRect.bottom &&
                     Math.abs(listRect.left - detailsRect.left) <= 1,
@@ -2046,9 +2082,8 @@ function fetchRawResponse(headers, path) {
                 sections: Array.from(page.querySelectorAll('.ui-admin-section > header h3'),
                     heading => heading.textContent),
                 statusHook: !!page.querySelector('.id-msg-update'),
-                actionButtons: Array.from(page.querySelectorAll('button'))
-                    .filter(button => ['Check now', 'Install', 'Install & reboot']
-                        .includes(button.textContent.trim())).length
+                primaryAction: page.querySelector('.id-update-primary-action')?.textContent.trim(),
+                previousAction: page.querySelector('.id-update-previous-releases')?.textContent.trim()
             };
         });
         await clickAdminNav('id-nav-network');
@@ -2728,17 +2763,22 @@ function fetchRawResponse(headers, path) {
             usageFileAudit.rawIpFound ||
             usageFileAudit.largest > 1024 * 1024)
             throw new Error(`invalid usage report files: ${JSON.stringify(usageFileAudit)}`);
-        if (adminUpgrade.actions.length !== 2 ||
-            adminUpgrade.actions.some(row => row.display !== 'grid' ||
-                Math.abs(row.buttonWidth - 112) > 1 ||
-                Math.abs(row.rightGap) > 1 ||
-                row.centerDelta > 1) ||
-            adminUpgrade.actions[0].labels.join(',') !== 'Check now' ||
-            adminUpgrade.actions[1].labels.join(',') !== 'Browse releases' ||
-            adminUpgrade.policyControls.length !== 1 ||
-            adminUpgrade.policyControls.some(control =>
-                Math.abs(control.left - adminUpgrade.policyControls[0].left) > 1 ||
-                Math.abs(control.width - adminUpgrade.policyControls[0].width) > 1) ||
+        if (adminUpgrade.primary.initial.label !== 'Check for updates' ||
+            adminUpgrade.primary.initial.disabled ||
+            !adminUpgrade.primary.initial.rightAligned ||
+            adminUpgrade.primary.checking.label !== 'Checking for updates' ||
+            !adminUpgrade.primary.checking.disabled ||
+            !adminUpgrade.primary.checking.progressVisible ||
+            Math.abs(adminUpgrade.primary.checking.progressHeight - 2) > 0.1 ||
+            adminUpgrade.primary.install.label !== 'Install' ||
+            adminUpgrade.primary.install.disabled ||
+            adminUpgrade.primary.install.progressVisible ||
+            !adminUpgrade.primary.install.result.includes('Newest release') ||
+            adminUpgrade.primary.install.lastCheck !== 'Last checked: 2026-09-21 11:12:28' ||
+            adminUpgrade.primary.restart !== 'Restart' ||
+            !adminUpgrade.primary.transferLabel.includes('Downloading release package') ||
+            !adminUpgrade.previous.hidden ||
+            !adminUpgrade.previous.expanded ||
             adminUpgrade.releasePicker.cards !== 4 ||
             adminUpgrade.releasePicker.nativeListbox ||
             !adminUpgrade.releasePicker.scrollable ||
@@ -2830,9 +2870,10 @@ function fetchRawResponse(headers, path) {
             throw new Error(`invalid modern admin DX page: ${JSON.stringify(adminDX)}`);
         if (adminUpdate.heading !== 'Updates' ||
             adminUpdate.sections.join(',') !==
-                'Software status,Automatic updates,Check for updates,Install a selected release' ||
+                'Update status,Available update,Previous releases' ||
             !adminUpdate.statusHook ||
-            adminUpdate.actionButtons !== 3)
+            adminUpdate.primaryAction !== 'Restart' ||
+            adminUpdate.previousAction !== 'Previous Releases')
             throw new Error(`invalid modern admin Update page: ${JSON.stringify(adminUpdate)}`);
         if (adminNetwork.heading !== 'Network' ||
             adminNetwork.sections.join(',') !==

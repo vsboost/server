@@ -28,7 +28,10 @@ typedef enum { WAIT_UNTIL_NO_USERS,
 
 // "struct conn_st" because of forward reference from inclusion by conn.h
 struct conn_st;
+void update_init();
+void update_start();
 void check_for_update(update_check_e type, struct conn_st* conn);
+void update_send_status(struct conn_st* conn);
 void update_send_release_list(struct conn_st* conn);
 void update_install_release(const char* date, bool reboot, struct conn_st* conn);
 void schedule_update(int min);

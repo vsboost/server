@@ -40,12 +40,16 @@ Boston, MA  02110-1301, USA.
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
 #include <string>
 
 static bool update_pending = false, update_task_running = false, update_in_progress = false;
+static bool update_restart_required = false;
+static time_t last_update_check;
+static u4_t next_update_check;
 static int pending_maj = -1, pending_min = -1;
 static std::string pending_date, pending_filename, pending_changes;
 static std::string requested_release_date;
@@ -54,6 +58,7 @@ static bool file_auto_download_check = false;
 static bool file_auto_download_oneshot = false;
 
 static const long update_download_timeout_s = 120;
+static const u4_t update_check_interval_s = 24 * 60 * 60;
 static const char* update_dir = "/media/mmcblk0p1/update";
 
 enum fail_reason_e {
@@ -69,6 +74,16 @@ enum fail_reason_e {
 };
 fail_reason_e fail_reason;
 
+static bool sha256_file(const char* filename, char actual[65]);
+
+static void update_restart_required_refresh()
+{
+    char running_digest[65], installed_digest[65];
+    update_restart_required = sha256_file("/proc/self/exe", running_digest) &&
+                              sha256_file("/media/mmcblk0p1/websdr.bin", installed_digest) &&
+                              strcmp(running_digest, installed_digest) != 0;
+}
+
 static void report_result(conn_t* conn) {
     // let admin interface know result
     assert(conn != NULL);
@@ -77,18 +92,26 @@ static void report_result(conn_t* conn) {
     char* release_date_m = kiwi_str_encode((char*)pending_date.c_str());
     char* release_filename_m = kiwi_str_encode((char*)pending_filename.c_str());
     char* release_changes_m = kiwi_str_encode((char*)pending_changes.c_str());
+    char last_check[32] = "";
+    if (last_update_check != 0) {
+        struct tm tm;
+        if (localtime_r(&last_update_check, &tm) != NULL)
+            strftime(last_check, sizeof(last_check), "%Y-%m-%d %H:%M:%S", &tm);
+    }
+    char* last_check_m = kiwi_str_encode(last_check);
     send_msg(conn, false, "MSG update_cb="
-                          "{\"f\":%d,\"p\":%d,\"i\":%d,\"r\":%d,\"g\":%d,"
+                          "{\"f\":%d,\"p\":%d,\"i\":%d,\"r\":%d,\"g\":%d,\"rr\":%d,"
                           "\"v1\":%d,\"v2\":%d,\"p1\":%d,\"p2\":%d,\"d\":\"%s\",\"t\":\"%s\","
-                          "\"rd\":\"%s\",\"rf\":\"%s\",\"rc\":\"%s\"}",
+                          "\"rd\":\"%s\",\"rf\":\"%s\",\"rc\":\"%s\",\"lc\":\"%s\"}",
              fail_reason, update_pending, update_in_progress, rx_chans, gps_chans,
-             version_maj, version_min, pending_maj, pending_min, date_m, time_m,
-             release_date_m, release_filename_m, release_changes_m);
+             update_restart_required, version_maj, version_min, pending_maj, pending_min, date_m, time_m,
+             release_date_m, release_filename_m, release_changes_m, last_check_m);
     kiwi_ifree(date_m, "date_m");
     kiwi_ifree(time_m, "time_m");
     kiwi_ifree(release_date_m, "release_date_m");
     kiwi_ifree(release_filename_m, "release_filename_m");
     kiwi_ifree(release_changes_m, "release_changes_m");
+    kiwi_ifree(last_check_m, "last_check_m");
 }
 
 static void report_progress(conn_t* conn, const char* msg) {
@@ -228,7 +251,7 @@ static bool release_parse(const char* json, release_t* release)
     return true;
 }
 
-static bool sha256_file_matches(const char* filename, const std::string& expected)
+static bool sha256_file(const char* filename, char actual[65])
 {
     FILE* fp = fopen(filename, "rb");
     if (fp == NULL)
@@ -246,11 +269,18 @@ static bool sha256_file_matches(const char* filename, const std::string& expecte
         return false;
 
     u1_t digest[32];
-    char actual[65];
     sha256_final(&ctx, digest);
     for (int i = 0; i < 32; i++)
         snprintf(&actual[i * 2], 3, "%02x", digest[i]);
     actual[64] = '\0';
+    return true;
+}
+
+static bool sha256_file_matches(const char* filename, const std::string& expected)
+{
+    char actual[65];
+    if (!sha256_file(filename, actual))
+        return false;
     return strcasecmp(actual, expected.c_str()) == 0;
 }
 
@@ -366,6 +396,7 @@ static int update_build(conn_t* conn, bool report, const release_t& release)
         goto exit;
     }
 
+    update_restart_required_refresh();
     status = EXIT_SUCCESS;
 exit:
     sd_enable(false);
@@ -390,6 +421,7 @@ static void _update_task(void* param) {
     fail_reason = FAIL_NONE;
 
     update_in_progress = true;
+    last_update_check = time(NULL);
 
     bool err;
     bool alpha = admcfg_bool("update_channel", &err, CFG_OPTIONAL);
@@ -502,18 +534,6 @@ void check_for_update(update_check_e type, conn_t* conn) {
 
     bool force = (type != WAIT_UNTIL_NO_USERS);
 
-    if (!force && admcfg_bool("update_check", NULL, CFG_REQUIRED) == false) {
-        // printf("UPDATE: exiting because admin update check not enabled\n");
-
-        if (file_auto_download_check) {
-            file_auto_download_check = false;
-            // printf("file_GET: update check false\n");
-            file_GET(TO_VOID_PARAM(FILE_DOWNLOAD_DIFF_RESTART));
-        }
-
-        return;
-    }
-
     if (force) {
         lprintf("UPDATE: force %s by admin\n", (type == FORCE_CHECK) ? "update check" : "build");
         assert(conn != NULL);
@@ -536,6 +556,24 @@ void check_for_update(update_check_e type, conn_t* conn) {
         update_task_running = true;
         CreateTask(_update_task, TO_VOID_PARAM(conn), ADMIN_PRIORITY);
     }
+}
+
+void update_init()
+{
+    update_restart_required_refresh();
+}
+
+void update_start()
+{
+    next_update_check = timer_sec() + update_check_interval_s;
+    update_pending = true;
+    check_for_update(WAIT_UNTIL_NO_USERS, NULL);
+}
+
+void update_send_status(conn_t* conn)
+{
+    assert(conn != NULL);
+    report_result(conn);
 }
 
 void update_send_release_list(conn_t* conn)
@@ -605,89 +643,15 @@ void update_install_release(const char* date, bool reboot, conn_t* conn)
     check_for_update(reboot? FORCE_RELEASE_BUILD_REBOOT : FORCE_RELEASE_BUILD, conn);
 }
 
-static bool update_on_startup = true;
-static int prev_update_window = -1;
-
 // called at the top of each minute
 void schedule_update(int min) {
-#define UPDATE_SPREAD_HOURS 5 // # hours to spread updates over
-#define UPDATE_SPREAD_MIN   (UPDATE_SPREAD_HOURS * 60)
+    (void) min;
+    u4_t now = timer_sec();
+    if (next_update_check == 0 || now < next_update_check)
+        return;
 
-#define UPDATE_START_HOUR 1 // 1 AM local time
-#define UPDATE_END_HOUR   (UPDATE_START_HOUR + UPDATE_SPREAD_HOURS)
-
-    // relative to local time if timezone has been determined, utc otherwise
-    int local_hour;
-    (void)local_hour_min_sec(&local_hour);
-
-//#define TEST_UPDATE     // enables printf()s and simulates local time entering update window
-#ifdef TEST_UPDATE
-    int utc_hour;
-    time_hour_min_sec(utc_time(), &utc_hour);
-    printf("UPDATE: UTC=%02d:%02d Local=%02d:%02d update_window=[%02d:00,%02d:00]\n",
-           utc_hour, min, local_hour, min, UPDATE_START_HOUR, UPDATE_END_HOUR);
-    local_hour = 1;
-#endif
-
-    bool update_window = (local_hour >= UPDATE_START_HOUR && local_hour < UPDATE_END_HOUR);
-    bool first_update_window = false;
-
-    // don't let Kiwis hit github.com all at once!
-    if (update_window) {
-        int mins_now = min + (local_hour - UPDATE_START_HOUR) * 60;
-        int serno = serial_number;
-
-#ifdef TEST_UPDATE
-#define SERNO_MIN_TRIG1 1 // set to minute in the future test update should start
-#define SERNO_MIN_TRIG2 2 // set to minute in the future test update should start
-        serno = (mins_now <= SERNO_MIN_TRIG1) ? SERNO_MIN_TRIG1 : SERNO_MIN_TRIG2;
-        int mins_trig = serno % UPDATE_SPREAD_MIN;
-        int hr_trig = UPDATE_START_HOUR + mins_trig / 60;
-        int min_trig = mins_trig % 60;
-        printf("TEST_UPDATE: %02d:%02d mins_now=%d mins_trig=%d (%02d:%02d sn=%d)\n",
-               local_hour, min, mins_now, mins_trig, hr_trig, min_trig, serno);
-#endif
-
-        update_window = update_window && (mins_now == (serno % UPDATE_SPREAD_MIN));
-
-        if (prev_update_window == -1) prev_update_window = update_window ? 1 : 0;
-        first_update_window = ((prev_update_window == 0) && update_window);
-#ifdef TEST_UPDATE
-        printf("TEST_UPDATE: update_window=%d prev_update_window=%d first_update_window=%d\n",
-               update_window, prev_update_window, first_update_window);
-#endif
-        prev_update_window = update_window ? 1 : 0;
-
-        if (update_window) {
-            printf("TLIMIT-IP 24hr cache cleared\n");
-            json_release(&cfg_ipl);
-            json_init(&cfg_ipl, (char*)"{}", "cfg_ipl"); // clear 24hr ip address connect time limit cache
-        }
-    }
-
-//#define TRIG_UPDATE
-#ifdef TRIG_UPDATE
-    static bool trig_update;
-    if (timer_sec() >= 60 && !trig_update) {
-        update_window = true;
-        trig_update = true;
-    }
-#endif
-
-    file_auto_download_check = first_update_window && !update_on_startup;
-
-    // printf("min=%d file_auto_download_check=%d update_window=%d update_on_startup=%d\n",
-    //     timer_sec()/60, file_auto_download_check, update_window, update_on_startup);
-
-    if (update_on_startup && admcfg_int("restart_update", NULL, CFG_REQUIRED) != 0) {
-        lprintf("UPDATE: update on restart delayed until update window\n");
-        update_on_startup = false;
-    }
-
-    if (update_window || update_on_startup) {
-        lprintf("UPDATE: check scheduled %s\n", update_on_startup ? "(startup)" : "");
-        update_on_startup = false;
-        update_pending = true;
-        check_for_update(WAIT_UNTIL_NO_USERS, NULL);
-    }
+    lprintf("UPDATE: 24-hour check scheduled\n");
+    next_update_check = now + update_check_interval_s;
+    update_pending = true;
+    check_for_update(WAIT_UNTIL_NO_USERS, NULL);
 }

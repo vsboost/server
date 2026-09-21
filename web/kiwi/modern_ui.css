@@ -2248,6 +2248,76 @@
    flex-wrap: wrap;
 }
 
+.ui-modern .ui-admin-update-header {
+   align-items: center;
+}
+
+.ui-modern .ui-admin-update-header p {
+   max-width: 48rem;
+   margin-bottom: 0;
+}
+
+.ui-modern .ui-admin-update-last-check {
+   margin-top: var(--ui-space-2);
+   color: var(--ui-text-muted);
+   font-size: var(--ui-font-size-meta);
+}
+
+.ui-modern .ui-admin-update-header button {
+   flex: 0 0 auto;
+   min-width: 164px;
+   margin: 0 !important;
+}
+
+.ui-modern .ui-admin-update-progress {
+   display: grid;
+   grid-template-columns: minmax(0, 1fr);
+   gap: var(--ui-space-2);
+   margin-bottom: var(--ui-space-3);
+}
+
+.ui-modern .ui-admin-update-progress > div {
+   height: 2px;
+   overflow: hidden;
+   border-radius: 999px;
+   background: var(--ui-border);
+}
+
+.ui-modern .ui-admin-update-progress i {
+   display: block;
+   width: 38%;
+   height: 100%;
+   border-radius: inherit;
+   background: var(--ui-accent);
+   animation: ui-update-progress 1.1s ease-in-out infinite;
+}
+
+.ui-modern .ui-admin-update-progress span {
+   color: var(--ui-text-muted);
+   font-size: var(--ui-font-size-meta);
+}
+
+.ui-modern .ui-admin-update-header button:disabled {
+   cursor: progress;
+   opacity: 0.72;
+}
+
+.ui-modern .ui-admin-update-result h4 {
+   margin: var(--ui-space-3) 0 var(--ui-space-2);
+}
+
+.ui-modern .ui-admin-update-result-progress {
+   margin-top: var(--ui-space-3);
+   color: var(--ui-accent);
+   font-size: var(--ui-font-size-meta);
+   font-weight: 700;
+}
+
+@keyframes ui-update-progress {
+   0% { transform: translateX(-110%); }
+   100% { transform: translateX(290%); }
+}
+
 .ui-modern .ui-admin-update-policy {
    display: grid;
    gap: var(--ui-space-3);
@@ -3385,6 +3455,10 @@
    .ui-modern .ui-admin-status-header p,
    .ui-modern .ui-admin-page-header p {
       text-align: left;
+   }
+
+   .ui-modern .ui-admin-update-header button {
+      width: 100%;
    }
 
    .ui-modern .ui-admin-status-grid,

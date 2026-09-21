@@ -41,6 +41,7 @@ Boston, MA  02110-1301, USA.
 #include "rx_waterfall.h"
 #include "security.h"
 #include "sha256.h"
+#include "update.h"
 
 #include <string.h>
 #include <time.h>
@@ -835,6 +836,7 @@ void file_GET(void* param) {
 
 void services_start() {
     init_curl();
+    update_init();
 
     net.serno = serial_number;
 
@@ -868,6 +870,7 @@ void services_start() {
 
     reg_kiwisdr_com_tid = CreateTask(reg_public, 0, SERVICES_PRIORITY);
     CreateTask(file_GET, FILE_DOWNLOAD_RELOAD, SERVICES_PRIORITY);
+    update_start();
 }
 
 void init_curl()

@@ -2604,12 +2604,15 @@ function config_cb(rx_chans, gps_chans, serno, pub, port_ext, pvt, port_int, nm,
 }
 
 function update_cb(fail_reason, pending, in_progress, rx_chans, gps_chans, vmaj, vmin, pmaj, pmin,
-   build_date, build_time, msg_txt, release_date, release_filename, release_changes)
+   build_date, build_time, msg_txt, release_date, release_filename, release_changes, restart_required, last_check)
 {
 	var msg_update = w3_el("id-msg-update");
 
    if (msg_update && msg_txt) {
-      msg_update.innerHTML += '<BR>' + decodeURIComponent(msg_txt);
+      var progress_msg = decodeURIComponent(msg_txt);
+      msg_update.innerHTML += '<BR>' + progress_msg;
+      if (typeof update_status_cb === 'function')
+         update_status_cb({ message: progress_msg });
       return;
    }
 
@@ -2668,6 +2671,23 @@ function update_cb(fail_reason, pending, in_progress, rx_chans, gps_chans, vmaj,
       }
 		msg_update.innerHTML = s;
 	}
+
+   if (typeof update_status_cb === 'function') {
+      update_status_cb({
+         fail_reason: fail_reason,
+         pending: pending,
+         in_progress: in_progress,
+         vmaj: vmaj,
+         vmin: vmin,
+         pmaj: pmaj,
+         pmin: pmin,
+         release_date: release_date,
+         release_filename: release_filename,
+         release_changes: release_changes,
+         restart_required: restart_required,
+         last_check: last_check
+      });
+   }
 }
 
 
@@ -3217,7 +3237,7 @@ function kiwi_msg(param, ws)
 			if (o) update_cb(o.f, o.p, o.i, o.r, o.g, o.v1, o.v2, o.p1, o.p2,
 				decodeURIComponent(o.d), decodeURIComponent(o.t), o.msg,
 				o.rd? decodeURIComponent(o.rd) : '', o.rf? decodeURIComponent(o.rf) : '',
-				o.rc? decodeURIComponent(o.rc) : '');
+				o.rc? decodeURIComponent(o.rc) : '', o.rr, o.lc? decodeURIComponent(o.lc) : '');
 			break;
 
 		case "stats_cb":     // in response to "SET STATS_UPD"

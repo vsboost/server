@@ -1281,6 +1281,12 @@ void c2s_admin(void* param) {
                 continue;
             }
 
+            i = strcmp(cmd, "SET update_status");
+            if (i == 0) {
+                update_send_status(conn);
+                continue;
+            }
+
             i = strcmp(cmd, "SET extint_load_extension_configs");
             if (i == 0) {
                 extint_load_extension_configs(conn);

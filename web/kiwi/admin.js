@@ -1246,71 +1246,155 @@ function connect_proxy_server_cb(path, val)
 
 function update_html()
 {
-   var status = w3_div('id-msg-update w3-container');
+   var header =
+      '<header class="ui-admin-page-header ui-admin-update-header">' +
+         '<div><span>SOFTWARE</span><h2>Updates</h2>' +
+            '<p>Keep this receiver current with the latest software release.</p>' +
+            '<div id="id-update-last-check" class="ui-admin-update-last-check">Last checked: Not checked yet</div></div>' +
+         w3_button_path('w3-aqua', 'id-update-primary-action', 'Check for updates',
+            'update_primary_cb') +
+      '</header>';
 
-   var policy =
-      w3_div('w3-text-teal ui-admin-update-policy',
-         w3_div('ui-admin-update-policy-row',
-            w3_switch_label('w3-label-inline w3-label-left', 'Automatic updates',
-               'On', 'Off', 'adm.update_install', adm.update_check && adm.update_install,
-               'update_auto_cb')
-         )
-      );
+   var status =
+      w3_div('id-update-progress ui-admin-update-progress w3-hide',
+         '<div><i></i></div><span id="id-update-progress-text"></span>') +
+      w3_div('id-msg-update w3-container');
 
-   var actions =
-      w3_div('w3-text-teal ui-admin-update-actions',
-         w3_div('w3-valign ui-admin-update-action',
-            '<b>Check for updates</b>' +
-            w3_button('w3-aqua w3-margin', 'Check now', 'update_check_now_cb')
-         )
-      );
+   var result = w3_div('id-update-result-row w3-hide',
+      admin_section('Available update', 'Version and change log for the latest release',
+         w3_div('id-update-result'), 'ui-admin-section-wide'));
 
    var content =
-      admin_page_header('SOFTWARE', 'Updates',
-         'Keep this receiver current with the latest software release.') +
+      header +
       '<div class="ui-admin-section-grid">' +
-         admin_section('Software status', 'Your current version and available updates', status,
-            'ui-admin-section-wide') +
-         admin_section('Automatic updates', 'Check for and install new releases automatically', policy) +
-         admin_section('Check for updates', 'Look for the latest available release now', actions) +
-         admin_section('Install a selected release',
-            'Choose a previous release. Only three releases are visible at a time; scroll for more.',
-            w3_div('ui-admin-update-action',
-               '<b>Available releases</b>' +
-               w3_button('w3-aqua w3-margin', 'Browse releases', 'update_release_list_now_cb')) +
-            w3_div('id-release-picker ui-admin-release-picker w3-margin-T-16'),
+         admin_section('Update status', 'Current update activity', status, 'ui-admin-section-wide') +
+         result +
+         admin_section('Previous releases',
+            'Install a release package already cached on the SD card.',
+            w3_button_path('w3-aqua', 'id-update-previous-releases', 'Previous Releases',
+               'update_previous_releases_cb') +
+            w3_div('id-release-picker ui-admin-release-picker w3-margin-T-16 w3-hide'),
             'ui-admin-section-wide') +
       '</div>';
+   setTimeout(function() { ext_send('SET update_status'); }, 0);
 	return w3_div('id-update w3-hide ui-admin-update', content);
 }
 
-function update_auto_cb(path, idx, first)
+var update_primary_mode = 'check';
+
+function update_primary_set(mode)
 {
-   var enabled = (+idx === 0);
-   var save = isArg(first)? !first : true;
-   adm.update_check = adm.update_install = enabled;
-   ext_set_cfg_param('adm.update_check', enabled, save);
-   ext_set_cfg_param('adm.update_install', enabled, save);
+   var action = w3_el('id-update-primary-action');
+   if (!action) return;
+   update_primary_mode = mode;
+   action.disabled = (mode == 'checking' || mode == 'installing' || mode == 'restarting');
+   action.textContent = ({
+      check: 'Check for updates',
+      checking: 'Checking for updates',
+      install: 'Install',
+      installing: 'Installing',
+      restart: 'Restart',
+      restarting: 'Restarting'
+   })[mode] || 'Check for updates';
 }
 
-function update_check_now_cb(id, idx)
+function update_progress(show, message)
 {
-	ext_send('SET force_check=1 force_build=0');
-	w3_el('id-msg-update').innerHTML =
-	   w3_icon('', 'fa-refresh fa-spin', 24) + ' &nbsp; Checking for software update..';
+   var progress = w3_el('id-update-progress');
+   if (!progress) return;
+   if (show) w3_show_block(progress);
+   else w3_hide(progress);
+   w3_innerHTML('id-update-progress-text', message || '');
 }
 
-function update_build_now_cb(id, idx)
+function update_result_progress(message)
 {
-	ext_send('SET force_check=1 force_build=1 force_reboot=0');
-	w3_el('id-msg-update').innerHTML = w3_icon('', 'fa-refresh fa-spin', 24) + 'Updating';
+   var progress = w3_el('id-update-result-progress');
+   if (progress)
+      progress.innerHTML = update_escape_html(message || '');
 }
 
-function update_build_reboot_now_cb(id, idx)
+function update_primary_cb()
 {
-	ext_send('SET force_check=1 force_build=1 force_reboot=1');
-	w3_el('id-msg-update').innerHTML = w3_icon('', 'fa-refresh fa-spin', 24) + 'Updating';
-   w3_show_block('id-build-reboot');
+   if (update_primary_mode == 'check') {
+      update_primary_set('checking');
+      update_progress(true, 'Checking for updates');
+      w3_innerHTML('id-msg-update', '');
+      ext_send('SET force_check=1 force_build=0');
+   } else
+   if (update_primary_mode == 'install') {
+      update_primary_set('installing');
+      update_progress(false);
+      update_result_progress('Preparing installation');
+      w3_innerHTML('id-msg-update', '');
+      ext_send('SET force_check=1 force_build=1 force_reboot=0');
+   } else
+   if (update_primary_mode == 'restart') {
+      update_primary_set('restarting');
+      update_progress(false);
+      ext_send('SET reboot');
+      wait_then_reload_page(45, 'Rebooting Web-888');
+   }
+}
+
+function update_status_cb(status)
+{
+   if (!w3_el('id-update-primary-action')) return;
+   if (status.last_check)
+      w3_innerHTML('id-update-last-check', 'Last checked: '+ update_escape_html(status.last_check));
+
+   if (status.message) {
+      update_result_progress(status.message);
+      if (status.message.indexOf('Update installed.') == 0) {
+         update_primary_set('installing');
+         update_progress(false);
+         ext_send('SET update_status');
+      } else
+      if (update_primary_mode == 'checking') {
+         update_progress(true, status.message);
+      } else {
+         update_progress(false);
+      }
+      return;
+   }
+
+   if (status.restart_required) {
+      update_primary_set('restart');
+      update_progress(false);
+      update_result_progress('Installed. Restart required to activate this release.');
+      return;
+   }
+
+   if (status.fail_reason) {
+      update_primary_set('check');
+      update_progress(false);
+      return;
+   }
+
+   var update_available = status.pmaj > status.vmaj ||
+      (status.pmaj == status.vmaj && status.pmin > status.vmin);
+   var result_row = w3_el('id-update-result-row');
+   var result = w3_el('id-update-result');
+   if (update_available && result_row && result) {
+      var changes = String(status.release_changes || '').split('\n').filter(function(change) {
+         return change != '';
+      }).map(function(change) {
+         return '<li>'+ update_escape_html(change) +'</li>';
+      }).join('');
+      result.innerHTML =
+         '<div><b>Installed version:</b> v'+ status.vmaj +'.'+ status.vmin +'</div>' +
+         '<div><b>New version:</b> v'+ status.pmaj +'.'+ status.pmin +
+         (status.release_date? ' ('+ update_escape_html(status.release_date) +')' : '') +'</div>' +
+         (status.release_filename? '<div>'+ update_escape_html(status.release_filename) +'</div>' : '') +
+         '<div id="id-update-result-progress" class="ui-admin-update-result-progress">Ready to install</div>' +
+         (changes? '<h4>Changes</h4><ul>'+ changes +'</ul>' : '');
+      w3_show_block(result_row);
+      update_primary_set('install');
+   } else {
+      if (result_row) w3_hide(result_row);
+      update_primary_set('check');
+   }
+   update_progress(false);
 }
 
 var update_release_catalog = {};
@@ -1322,10 +1406,13 @@ function update_escape_html(value)
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function update_release_list_now_cb(id, idx)
+function update_previous_releases_cb(id, idx)
 {
    var picker = w3_el('id-release-picker');
-   if (picker) picker.innerHTML = w3_icon('', 'fa-refresh fa-spin', 20) + ' Loading releases...';
+   if (!picker) return;
+   w3_show_block(picker);
+   if (picker.dataset.loaded == 'true') return;
+   picker.innerHTML = w3_icon('', 'fa-refresh fa-spin', 20) + ' Loading cached releases...';
    ext_send('SET release_list');
 }
 
@@ -1346,15 +1433,18 @@ function update_release_list_cb(response)
       if (!release || !Array.isArray(release.downloads) || !release.downloads.length)
          return false;
       release.local = local.includes(release.downloads[0].filename);
+      if (!release.local)
+         return false;
       update_release_catalog[id] = release;
       return /^\d{8}$/.test(id);
    }).sort().reverse();
 
    if (!ids.length) {
-      picker.innerHTML = '<span class="w3-text-red">No installable releases were returned.</span>';
+      picker.innerHTML = '<span class="w3-text-red">No cached release packages are available on the SD card.</span>';
       return;
    }
 
+   picker.dataset.loaded = 'true';
    picker.innerHTML =
       '<div class="ui-admin-release-picker-content">' +
          '<div id="id-update-release-list" class="ui-admin-release-list" role="listbox" ' +
