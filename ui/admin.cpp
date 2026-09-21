@@ -664,10 +664,11 @@ void c2s_admin(void* param) {
             // update
             ////////////////////////////////
 
-            int force_check, force_build;
-            i = sscanf(cmd, "SET force_check=%d force_build=%d", &force_check, &force_build);
-            if (i == 2) {
-                check_for_update(force_build ? FORCE_BUILD : FORCE_CHECK, conn);
+            int force_check, force_build, force_reboot = 0;
+            i = sscanf(cmd, "SET force_check=%d force_build=%d force_reboot=%d",
+                       &force_check, &force_build, &force_reboot);
+            if (i == 2 || i == 3) {
+                check_for_update(force_build ? (force_reboot ? FORCE_BUILD_REBOOT : FORCE_BUILD) : FORCE_CHECK, conn);
                 continue;
             }
 

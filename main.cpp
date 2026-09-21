@@ -239,6 +239,7 @@ int main(int argc, char* argv[]) {
         admcfg_set_int("snd_rate", kiwi.snd_rate);
         update_admcfg = true;
     }
+    admcfg_default_bool("update_reboot", true, &update_admcfg);
 
     if (update_admcfg) admcfg_save_json(cfg_adm.json); // during init doesn't conflict with admin cfg
 

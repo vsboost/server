@@ -34,3 +34,4 @@ void file_GET(void* param);
 
 kstr_t* curl_get(const char* url, long timeout_s, int *status);
 int curl_get_file(const char* url, const char* filename, long timeout_s);
+int curl_get_file_resume(const char* url, const char* filename, long timeout_s);

@@ -980,3 +980,53 @@ int curl_get_file(const char* url, const char* output_filename, long timeout_s)
     curl_easy_cleanup(curl);
     return rc;
 }
+
+int curl_get_file_resume(const char* url, const char* output_filename, long timeout_s)
+{
+    struct stat st;
+    curl_off_t offset = 0;
+
+    if (stat(output_filename, &st) == 0) {
+        if (!S_ISREG(st.st_mode)) {
+            lprintf("CURL: refusing to resume non-regular file %s\n", output_filename);
+            return -1;
+        }
+        offset = st.st_size;
+    }
+    else if (errno != ENOENT) {
+        lprintf("CURL: unable to stat %s: %s\n", output_filename, strerror(errno));
+        return -1;
+    }
+
+    FILE* fp = fopen(output_filename, "ab");
+    if (fp == NULL) {
+        lprintf("CURL: unable to open %s: %s\n", output_filename, strerror(errno));
+        return -1;
+    }
+
+    CURL* curl = curl_easy_init();
+    if (curl == NULL) {
+        fclose(fp);
+        return -1;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_s);
+    if (offset != 0)
+        curl_easy_setopt(curl, CURLOPT_RESUME_FROM_LARGE, offset);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        lprintf("CURL: download %s failed: %s\n", url, curl_easy_strerror(res));
+    }
+
+    fclose(fp);
+    curl_easy_cleanup(curl);
+    if (res == CURLE_OK)
+        return 0;
+    return (res == CURLE_RANGE_ERROR)? -2 : -1;
+}

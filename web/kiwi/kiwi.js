@@ -2603,7 +2603,8 @@ function config_cb(rx_chans, gps_chans, serno, pub, port_ext, pvt, port_int, nm,
 	}
 }
 
-function update_cb(fail_reason, pending, in_progress, rx_chans, gps_chans, vmaj, vmin, pmaj, pmin, build_date, build_time, msg_txt)
+function update_cb(fail_reason, pending, in_progress, rx_chans, gps_chans, vmaj, vmin, pmaj, pmin,
+   build_date, build_time, msg_txt, release_date, release_filename, release_changes)
 {
 	var msg_update = w3_el("id-msg-update");
 
@@ -2617,6 +2618,15 @@ function update_cb(fail_reason, pending, in_progress, rx_chans, gps_chans, vmaj,
 	if (msg_update) {
 		var s;
 		s = 'Installed version: v'+ vmaj +'.'+ vmin +', built '+ build_date +' '+ build_time;
+      if (release_date) {
+         var escape_html = function(value) {
+            return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+               .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+         };
+         s += '<br>Latest release: '+ escape_html(release_date);
+         if (release_filename)
+            s += ' ('+ escape_html(release_filename) +')';
+      }
 		if (fail_reason) {
 		   var r;
 		   switch (fail_reason) {
@@ -2650,6 +2660,12 @@ function update_cb(fail_reason, pending, in_progress, rx_chans, gps_chans, vmaj,
 			else
 				s += '<br>Available version: v'+ pmaj +'.'+ pmin;
 		}
+      if (release_changes) {
+         var changes = release_changes.split('\n').map(function(change) {
+            return '<li>'+ escape_html(change) +'</li>';
+         }).join('');
+         s += '<br><b>Release changes</b><ul>'+ changes +'</ul>';
+      }
 		msg_update.innerHTML = s;
 	}
 }
@@ -3199,7 +3215,9 @@ function kiwi_msg(param, ws)
 			//console.log('update_cb='+ param[1]);
 			var o = kiwi_JSON_parse('update_cb', param[1]);
 			if (o) update_cb(o.f, o.p, o.i, o.r, o.g, o.v1, o.v2, o.p1, o.p2,
-				decodeURIComponent(o.d), decodeURIComponent(o.t), o.msg);
+				decodeURIComponent(o.d), decodeURIComponent(o.t), o.msg,
+				o.rd? decodeURIComponent(o.rd) : '', o.rf? decodeURIComponent(o.rf) : '',
+				o.rc? decodeURIComponent(o.rc) : '');
 			break;
 
 		case "stats_cb":     // in response to "SET STATS_UPD"

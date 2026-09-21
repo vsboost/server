@@ -1774,14 +1774,16 @@ function fetchRawResponse(headers, path) {
             const actions = rows.map(row => {
                 const button = row.querySelector('button');
                 const rowRect = row.getBoundingClientRect();
-                const buttonRect = button.getBoundingClientRect();
+                const actionControl = row.querySelector('.ui-admin-update-action-buttons') || button;
+                const controlRect = actionControl.getBoundingClientRect();
                 return {
+                    labels: Array.from(row.querySelectorAll('button')).map(button => button.textContent.trim()),
                     display: getComputedStyle(row).display,
-                    buttonWidth: buttonRect.width,
-                    rightGap: rowRect.right - buttonRect.right,
+                    buttonWidth: button.getBoundingClientRect().width,
+                    rightGap: rowRect.right - controlRect.right,
                     centerDelta: Math.abs(
                         (rowRect.top + rowRect.height / 2) -
-                        (buttonRect.top + buttonRect.height / 2))
+                        (controlRect.top + controlRect.height / 2))
                 };
             });
             const policyControls = Array.from(
@@ -1985,7 +1987,8 @@ function fetchRawResponse(headers, path) {
                     heading => heading.textContent),
                 statusHook: !!page.querySelector('.id-msg-update'),
                 actionButtons: Array.from(page.querySelectorAll('button'))
-                    .filter(button => ['Check now', 'Install now'].includes(button.textContent.trim())).length
+                    .filter(button => ['Check now', 'Install', 'Install & reboot']
+                        .includes(button.textContent.trim())).length
             };
         });
         await clickAdminNav('id-nav-network');
@@ -2670,11 +2673,12 @@ function fetchRawResponse(headers, path) {
                 Math.abs(row.buttonWidth - 112) > 1 ||
                 Math.abs(row.rightGap) > 1 ||
                 row.centerDelta > 1) ||
-            adminUpgrade.policyControls.length !== 2 ||
-            Math.abs(adminUpgrade.policyControls[0].left -
-                adminUpgrade.policyControls[1].left) > 1 ||
-            Math.abs(adminUpgrade.policyControls[0].width -
-                adminUpgrade.policyControls[1].width) > 1)
+            adminUpgrade.actions[0].labels.join(',') !== 'Check now' ||
+            adminUpgrade.actions[1].labels.join(',') !== 'Install,Install & reboot' ||
+            adminUpgrade.policyControls.length !== 3 ||
+            adminUpgrade.policyControls.some(control =>
+                Math.abs(control.left - adminUpgrade.policyControls[0].left) > 1 ||
+                Math.abs(control.width - adminUpgrade.policyControls[0].width) > 1))
             throw new Error(`invalid admin upgrade actions: ${JSON.stringify(adminUpgrade)}`);
         if (adminControl.heading !== 'Receiver control' ||
             adminControl.sections.join(',') !==
@@ -2758,7 +2762,7 @@ function fetchRawResponse(headers, path) {
             adminUpdate.sections.join(',') !==
                 'Update status,Automatic updates,Manual actions,Release channel' ||
             !adminUpdate.statusHook ||
-            adminUpdate.actionButtons !== 2)
+            adminUpdate.actionButtons !== 3)
             throw new Error(`invalid modern admin Update page: ${JSON.stringify(adminUpdate)}`);
         if (adminNetwork.heading !== 'Network' ||
             adminNetwork.sections.join(',') !==

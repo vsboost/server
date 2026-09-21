@@ -32,9 +32,13 @@ Boston, MA  02110-1301, USA.
 #include "rx_util.h"
 #include "services.h"
 #include "peri.h"
+#include "sha256.h"
+#include "jsmn.h"
 
 #include <types.h>
+#include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
@@ -42,12 +46,14 @@ Boston, MA  02110-1301, USA.
 
 static bool update_pending = false, update_task_running = false, update_in_progress = false;
 static int pending_maj = -1, pending_min = -1;
+static std::string pending_date, pending_filename, pending_changes;
 
 static bool file_auto_download_check = false;
 static bool file_auto_download_oneshot = false;
 
 static const long update_download_timeout_s = 120;
-static const char* update_files[] = { "websdr.bin", "websdr_hf.bit", "websdr_vhf.bit" };
+static const char* update_dir = "/media/mmcblk0p1/update";
+static const char* update_zip = "/media/mmcblk0p1/update/release.zip";
 
 enum fail_reason_e {
     FAIL_NONE = 0,
@@ -67,13 +73,21 @@ static void report_result(conn_t* conn) {
     assert(conn != NULL);
     char* date_m = kiwi_str_encode((char*)__DATE__);
     char* time_m = kiwi_str_encode((char*)__TIME__);
+    char* release_date_m = kiwi_str_encode((char*)pending_date.c_str());
+    char* release_filename_m = kiwi_str_encode((char*)pending_filename.c_str());
+    char* release_changes_m = kiwi_str_encode((char*)pending_changes.c_str());
     send_msg(conn, false, "MSG update_cb="
                           "{\"f\":%d,\"p\":%d,\"i\":%d,\"r\":%d,\"g\":%d,"
-                          "\"v1\":%d,\"v2\":%d,\"p1\":%d,\"p2\":%d,\"d\":\"%s\",\"t\":\"%s\"}",
+                          "\"v1\":%d,\"v2\":%d,\"p1\":%d,\"p2\":%d,\"d\":\"%s\",\"t\":\"%s\","
+                          "\"rd\":\"%s\",\"rf\":\"%s\",\"rc\":\"%s\"}",
              fail_reason, update_pending, update_in_progress, rx_chans, gps_chans,
-             version_maj, version_min, pending_maj, pending_min, date_m, time_m);
+             version_maj, version_min, pending_maj, pending_min, date_m, time_m,
+             release_date_m, release_filename_m, release_changes_m);
     kiwi_ifree(date_m, "date_m");
     kiwi_ifree(time_m, "time_m");
+    kiwi_ifree(release_date_m, "release_date_m");
+    kiwi_ifree(release_filename_m, "release_filename_m");
+    kiwi_ifree(release_changes_m, "release_changes_m");
 }
 
 static void report_progress(conn_t* conn, const char* msg) {
@@ -85,134 +99,269 @@ static void report_progress(conn_t* conn, const char* msg) {
     kiwi_ifree(msg_m, "msg_m");
 }
 
-static bool install_update_file(const char* filename)
+typedef struct {
+    std::string date, filename, sha256, link, mirror, changes;
+    int maj, min;
+} release_t;
+
+static int json_skip(const jsmntok_t* tok, int index)
 {
-    std::string active = "/media/mmcblk0p1/" + std::string(filename);
-    std::string staged = "/media/mmcblk0p1/update/" + std::string(filename);
-    std::string backup = active + ".old";
+    int next = index + 1;
+    for (int i = 0; i < tok[index].size; i++)
+        next = json_skip(tok, next);
+    return next;
+}
 
-    if (unlink(backup.c_str()) != 0 && errno != ENOENT) {
-        lprintf("UPDATE: unable to remove backup %s: %s\n", backup.c_str(), strerror(errno));
-        return false;
+static bool json_token_eq(const char* json, const jsmntok_t* tok, const char* value)
+{
+    int len = tok->end - tok->start;
+    return tok->type == JSMN_STRING && (int) strlen(value) == len &&
+        strncmp(&json[tok->start], value, len) == 0;
+}
+
+static int json_object_value(const char* json, const jsmntok_t* tok, int object, const char* key)
+{
+    if (tok[object].type != JSMN_OBJECT)
+        return -1;
+
+    int pos = object + 1;
+    for (int i = 0; i < tok[object].size; i += 2) {
+        if (json_token_eq(json, &tok[pos], key))
+            return pos + 1;
+        pos = json_skip(tok, pos + 1);
     }
+    return -1;
+}
 
-    if (rename(active.c_str(), backup.c_str()) != 0) {
-        lprintf("UPDATE: unable to back up %s: %s\n", active.c_str(), strerror(errno));
+static bool json_string_value(const char* json, const jsmntok_t* tok, int index, std::string* value)
+{
+    if (index < 0 || tok[index].type != JSMN_STRING)
         return false;
+    value->assign(&json[tok[index].start], tok[index].end - tok[index].start);
+    return true;
+}
+
+static bool release_date_to_version(const std::string& date, int* maj, int* min)
+{
+    int year, month, day;
+    if (date.size() != 10 || sscanf(date.c_str(), "%4d-%2d-%2d", &year, &month, &day) != 3 ||
+        date[4] != '-' || date[7] != '-' || month < 1 || month > 12 || day < 1 || day > 31)
+        return false;
+
+    *maj = year;
+    *min = month * 100 + day;
+    return true;
+}
+
+static bool is_hex_sha256(const std::string& sha256)
+{
+    if (sha256.size() != 64)
+        return false;
+    for (size_t i = 0; i < sha256.size(); i++) {
+        if (!isxdigit((unsigned char) sha256[i]))
+            return false;
     }
+    return true;
+}
 
-    if (rename(staged.c_str(), active.c_str()) != 0) {
-        lprintf("UPDATE: unable to install %s: %s\n", staged.c_str(), strerror(errno));
-        if (rename(backup.c_str(), active.c_str()) != 0)
-            lprintf("UPDATE: unable to restore %s: %s\n", active.c_str(), strerror(errno));
+static bool release_parse(const char* json, release_t* release)
+{
+    jsmn_parser parser;
+    jsmntok_t tok[128];
+    jsmn_init(&parser);
+    int ntok = jsmn_parse(&parser, json, strlen(json), tok, ARRAY_LEN(tok));
+    if (ntok < 1 || tok[0].type != JSMN_OBJECT)
         return false;
+
+    int downloads = json_object_value(json, tok, 0, "downloads");
+    if (!json_string_value(json, tok, json_object_value(json, tok, 0, "date"), &release->date) ||
+        downloads < 0 || tok[downloads].type != JSMN_ARRAY || tok[downloads].size < 1)
+        return false;
+
+    int download = downloads + 1;
+    if (tok[download].type != JSMN_OBJECT ||
+        !json_string_value(json, tok, json_object_value(json, tok, download, "filename"), &release->filename) ||
+        !json_string_value(json, tok, json_object_value(json, tok, download, "sha256"), &release->sha256) ||
+        !json_string_value(json, tok, json_object_value(json, tok, download, "link"), &release->link) ||
+        !json_string_value(json, tok, json_object_value(json, tok, download, "mirror"), &release->mirror) ||
+        !release_date_to_version(release->date, &release->maj, &release->min) ||
+        !is_hex_sha256(release->sha256) ||
+        release->filename.find('/') != std::string::npos ||
+        release->filename.size() < 5 || release->filename.substr(release->filename.size() - 4) != ".zip" ||
+        release->link.compare(0, 8, "https://") != 0 || release->mirror.compare(0, 8, "https://") != 0)
+        return false;
+
+    int changes = json_object_value(json, tok, 0, "changes");
+    if (changes >= 0 && tok[changes].type == JSMN_ARRAY) {
+        int pos = changes + 1;
+        for (int i = 0; i < tok[changes].size; i++) {
+            std::string change;
+            if (!json_string_value(json, tok, pos, &change))
+                return false;
+            if (!release->changes.empty())
+                release->changes += "\n";
+            release->changes += change;
+            pos = json_skip(tok, pos);
+        }
     }
 
     return true;
 }
 
-static void restore_update_file(const char* filename)
+static bool sha256_file_matches(const char* filename, const std::string& expected)
 {
-    std::string active = "/media/mmcblk0p1/" + std::string(filename);
-    std::string backup = active + ".old";
+    FILE* fp = fopen(filename, "rb");
+    if (fp == NULL)
+        return false;
 
-    if (unlink(active.c_str()) != 0 && errno != ENOENT) {
-        lprintf("UPDATE: unable to remove incomplete update %s: %s\n", active.c_str(), strerror(errno));
-        return;
-    }
+    SHA256_CTX ctx;
+    sha256_init(&ctx);
+    u1_t buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), fp)) != 0)
+        sha256_update(&ctx, buf, n);
+    bool ok = !ferror(fp);
+    fclose(fp);
+    if (!ok)
+        return false;
 
-    if (rename(backup.c_str(), active.c_str()) != 0)
-        lprintf("UPDATE: unable to restore %s: %s\n", active.c_str(), strerror(errno));
+    u1_t digest[32];
+    char actual[65];
+    sha256_final(&ctx, digest);
+    for (int i = 0; i < 32; i++)
+        snprintf(&actual[i * 2], 3, "%02x", digest[i]);
+    actual[64] = '\0';
+    return strcasecmp(actual, expected.c_str()) == 0;
 }
 
-static int update_build(conn_t* conn, bool report, const char* channel) {
-    std::string url_base = "https://downloads.rx-888.com/web-888/" + std::string(channel) + "/";
-    sd_enable(true);
+static bool archive_paths_safe()
+{
+    FILE* fp = popen("unzip -Z1 /media/mmcblk0p1/update/release.zip", "r");
+    if (fp == NULL)
+        return false;
 
-    // Fetch the binary
-    int status = system("mkdir -p /media/mmcblk0p1/update; rm -Rf /media/mmcblk0p1/update/*");
-    int installed = 0;
-    if (status != 0) {
-        lprintf("UPDATE: create folder status=0x%08x\n", status);
+    char path[PATH_MAX];
+    bool ok = true;
+    while (fgets(path, sizeof(path), fp) != NULL) {
+        path[strcspn(path, "\r\n")] = '\0';
+        if (path[0] == '\0' || path[0] == '/' || strstr(path, "\\") != NULL) {
+            ok = false;
+            break;
+        }
+
+        const char* part = path;
+        while (*part != '\0') {
+            const char* slash = strchr(part, '/');
+            size_t len = slash? (size_t) (slash - part) : strlen(part);
+            if (len == 0 || (len == 2 && strncmp(part, "..", 2) == 0)) {
+                ok = false;
+                break;
+            }
+            if (slash == NULL)
+                break;
+            part = slash + 1;
+        }
+        if (!ok)
+            break;
+    }
+
+    if (pclose(fp) != 0)
+        ok = false;
+    return ok;
+}
+
+static bool download_release(conn_t* conn, bool report, const release_t& release)
+{
+    struct stat st;
+    if (stat(update_zip, &st) == 0 && sha256_file_matches(update_zip, release.sha256)) {
+        if (report) report_progress(conn, "Using previously downloaded verified release package");
+        return true;
+    }
+    if (stat(update_zip, &st) == 0 || errno != ENOENT)
+        unlink(update_zip);
+
+    const std::string urls[] = { release.link, release.mirror };
+    for (int source = 0; source < ARRAY_LEN(urls); source++) {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            if (report) {
+                char* msg;
+                asprintf(&msg, "Downloading %s (%s attempt %d of 3)%s",
+                         release.filename.c_str(), source == 0? "primary" : "mirror", attempt,
+                         source == 0? "" : " after primary download failures");
+                report_progress(conn, msg);
+                kiwi_asfree(msg);
+            }
+
+            int status = curl_get_file_resume(urls[source].c_str(), update_zip, update_download_timeout_s);
+            if (status == 0) {
+                if (sha256_file_matches(update_zip, release.sha256))
+                    return true;
+                lprintf("UPDATE: downloaded ZIP checksum did not match on %s attempt %d\n",
+                        source == 0? "primary" : "mirror", attempt);
+                unlink(update_zip);
+            }
+            else if (status == -2) {
+                lprintf("UPDATE: stored partial ZIP cannot be resumed; restarting transfer\n");
+                unlink(update_zip);
+            }
+        }
+    }
+    return false;
+}
+
+static int update_build(conn_t* conn, bool report, const release_t& release)
+{
+    sd_enable(true);
+    int status = EXIT_FAILURE;
+
+    if (mkdir(update_dir, 0755) != 0 && errno != EEXIST) {
+        lprintf("UPDATE: unable to create %s: %s\n", update_dir, strerror(errno));
         fail_reason = FAIL_INSTALL;
         goto exit;
     }
 
-    if (report) report_progress(conn, "Download HF FPGA firmware");
-    status = curl_get_file((url_base + "websdr_hf.bit").c_str(), "/media/mmcblk0p1/update/websdr_hf.bit", update_download_timeout_s);
-    if (status != 0) {
-        lprintf("UPDATE: fetch HF FPGA firmware status=0x%08x\n", status);
+    if (!download_release(conn, report, release)) {
         fail_reason = FAIL_DOWNLOAD;
         goto exit;
     }
 
-    if (report) report_progress(conn, "Download VHF FPGA firmware");
-    status = curl_get_file((url_base + "websdr_vhf.bit").c_str(), "/media/mmcblk0p1/update/websdr_vhf.bit", update_download_timeout_s);
-    if (status != 0) {
-        lprintf("UPDATE: fetch VHF FPGA firmware status=0x%08x\n", status);
-        fail_reason = FAIL_DOWNLOAD;
+    if (report) report_progress(conn, "Verifying release archive");
+    if (!archive_paths_safe() || system("unzip -tq /media/mmcblk0p1/update/release.zip >/dev/null") != 0) {
+        lprintf("UPDATE: release archive is invalid or contains unsafe paths\n");
+        fail_reason = FAIL_INSTALL;
         goto exit;
     }
 
-    if (report) report_progress(conn, "Download Web-888 Server");
-
-    status = curl_get_file((url_base + "websdr.bin").c_str(), "/media/mmcblk0p1/update/websdr.bin", update_download_timeout_s);
-    if (status != 0) {
-        lprintf("UPDATE: fetch binary status=0x%08x\n", status);
-        fail_reason = FAIL_DOWNLOAD;
+    if (report) report_progress(conn, "Installing release to SD card (preserving config)");
+    if (system("unzip -oq /media/mmcblk0p1/update/release.zip -d /media/mmcblk0p1 -x 'config/*'") != 0) {
+        lprintf("UPDATE: unable to extract release archive\n");
+        fail_reason = FAIL_INSTALL;
         goto exit;
-    }
-
-    if (report) report_progress(conn, "Download checksum file");
-    status = curl_get_file((url_base + "checksum").c_str(), "/media/mmcblk0p1/update/checksum", 15);
-    if (status != 0) {
-        lprintf("UPDATE: fetch checksum status=0x%08x\n", status);
-        fail_reason = FAIL_DOWNLOAD;
-        goto exit;
-    }
-
-    if (report) report_progress(conn, "Verify downloaded files");
-    status = system("cd /media/mmcblk0p1/update && sed '/web-888-alpine/d' checksum | sha256sum -c -");
-    if (status != 0) {
-        lprintf("UPDATE: checksum failed status=0x%08x\n", status);
-        fail_reason = FAIL_CHECKSUM;
-        goto exit;
-    }
-
-    if (report) report_progress(conn, "Install update to SD card");
-
-    for (; installed < ARRAY_LEN(update_files); installed++) {
-        if (!install_update_file(update_files[installed])) {
-            for (int i = 0; i < installed; i++)
-                restore_update_file(update_files[i]);
-            fail_reason = FAIL_INSTALL;
-            goto exit;
-        }
     }
 
     status = EXIT_SUCCESS;
-
 exit:
     sd_enable(false);
-
     return status;
 }
 
 static void _update_task(void* param) {
     conn_t* conn = (conn_t*)FROM_VOID_PARAM(param);
     bool force_check = (conn && conn->update_check == FORCE_CHECK);
-    bool force_build = (conn && conn->update_check == FORCE_BUILD);
+    bool force_build = (conn && (conn->update_check == FORCE_BUILD || conn->update_check == FORCE_BUILD_REBOOT));
+    bool force_build_reboot = (conn && conn->update_check == FORCE_BUILD_REBOOT);
     bool report = (force_check || force_build);
-    bool ver_changed, update_install;
+    bool release_changed, update_install;
     int status;
-    kstr_t* ver = NULL;
+    kstr_t* metadata = NULL;
+    release_t release;
     fail_reason = FAIL_NONE;
 
     update_in_progress = true;
 
     bool err;
-    bool ch = admcfg_bool("update_channel", &err, CFG_OPTIONAL);
-    if (err) ch = false;
+    bool alpha = admcfg_bool("update_channel", &err, CFG_OPTIONAL);
+    if (err) alpha = false;
 
     lprintf("UPDATE: checking for updates\n");
     if (force_check) update_pending = false; // don't let pending status override version reporting when a forced check
@@ -232,69 +381,59 @@ static void _update_task(void* param) {
         }
     }
 
-    if (report) report_progress(conn, "Getting latest version information");
-    // get pending_maj, pending_min
-    // get the latest version infor from www.rx-888.com
-    // Run fetch in a Linux child process otherwise this thread will block and cause trouble
-    // if the check is invoked from the admin page while there are active user connections.
-    
-    ver = curl_get(ch ? "https://downloads.rx-888.com/web-888/alpha/version.txt" : "https://downloads.rx-888.com/web-888/stable/version.txt", 5, &status);
+    if (report) report_progress(conn, "Getting latest release information");
+    metadata = curl_get(alpha? "https://www.rx-888.com/api/releases/latest" :
+                        "https://www.rx-888.com/api/releases/latest?stable=true", 15, &status);
 
-    if (ver == NULL || status != 0) {
-        lprintf("UPDATE: failed to get latest version information from server\n");
+    if (metadata == NULL || status != 0 || !release_parse(kstr_sp(metadata), &release)) {
+        lprintf("UPDATE: failed to get valid latest release information from server\n");
+        if (metadata) kstr_free(metadata);
         fail_reason = FAIL_VERSION;
         if (report) report_result(conn);
         goto common_return;
     }
 
-    {
-        int n = sscanf(kstr_sp(ver), "%d.%d", &pending_maj, &pending_min);
-        if (n != 2) {
-            lprintf("UPDATE: invalid latest version information from server\n");
-            kstr_free(ver);
-            fail_reason = FAIL_VERSION;
-            if (report) report_result(conn);
-            goto common_return;
-        }
-
-        ver_changed = (pending_maj > version_maj || (pending_maj == version_maj && pending_min > version_min));
-        update_install = (admcfg_bool("update_install", NULL, CFG_REQUIRED) == true);
-        kstr_free(ver);
-    }
+    pending_maj = release.maj;
+    pending_min = release.min;
+    pending_date = release.date;
+    pending_filename = release.filename;
+    pending_changes = release.changes;
+    release_changed = (pending_maj > version_maj || (pending_maj == version_maj && pending_min > version_min));
+    update_install = (admcfg_bool("update_install", NULL, CFG_REQUIRED) == true);
+    kstr_free(metadata);
 
     {
         if (kiwi_file_exists("/root/config/force_update")) {
-            ver_changed = true;
+            release_changed = true;
             update_install = true;
         }
     }
 
     if (force_check) {
         update_in_progress = false;
-        if (ver_changed)
-            lprintf("UPDATE: version changed (current %d.%d, new %d.%d), but check only\n",
+        if (release_changed)
+            lprintf("UPDATE: release changed (current %d.%d, new %d.%d), but check only\n",
                     version_maj, version_min, pending_maj, pending_min);
         else
-            lprintf("UPDATE: running the most current version\n");
+            lprintf("UPDATE: running the most current release\n");
 
         if (report) report_result(conn);
         goto common_return;
     }
     else
 
-        if (ver_changed && !update_install) {
-        lprintf("UPDATE: version changed (current %d.%d, new %d.%d), but update install not enabled\n",
+        if (release_changed && !update_install) {
+        lprintf("UPDATE: release changed (current %d.%d, new %d.%d), but update install not enabled\n",
                 version_maj, version_min, pending_maj, pending_min);
     }
     else
 
-        if (ver_changed || force_build) {
-        lprintf("UPDATE: version changed, current %d.%d, new %d.%d\n",
+        if (release_changed || force_build) {
+        lprintf("UPDATE: installing release, current %d.%d, new %d.%d\n",
                 version_maj, version_min, pending_maj, pending_min);
-        lprintf("UPDATE: installing new version..\n");
 
         u4_t build_time = timer_sec();
-        status = update_build(conn, report, ch ? "alpha" : "stable");
+        status = update_build(conn, report, release);
 
         if (status) {
             lprintf("UPDATE: installation failed\n");
@@ -303,13 +442,21 @@ static void _update_task(void* param) {
         }
 
         lprintf("UPDATE: build took %d secs\n", timer_sec() - build_time);
-        lprintf("UPDATE: switching to new version %d.%d\n", pending_maj, pending_min);
-
-        lprintf("UPDATE: rebooting Beagle..\n");
-        system("sleep 3; reboot");
+        bool reboot = force_build? force_build_reboot : admcfg_bool("update_reboot", NULL, CFG_REQUIRED);
+        if (reboot) {
+            lprintf("UPDATE: rebooting after successful installation\n");
+            system("sleep 3; reboot");
+        } else {
+            lprintf("UPDATE: update installed; reboot is required to activate it\n");
+            if (report) {
+                update_in_progress = false;
+                report_result(conn);
+                report_progress(conn, "Update installed. Reboot the receiver to activate it.");
+            }
+        }
     }
     else {
-        lprintf("UPDATE: version %d.%d is current\n", version_maj, version_min);
+        lprintf("UPDATE: release %d.%d is current\n", version_maj, version_min);
     }
 
 common_return:

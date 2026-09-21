@@ -1255,8 +1255,12 @@ function update_html()
                'Yes', 'No', 'adm.update_check', adm.update_check, 'admin_radio_YN_cb')
          ),
          w3_div('ui-admin-update-policy-row',
-            w3_switch_label('w3-label-inline w3-label-left', 'Automatically install software updates?',
+            w3_switch_label('w3-label-inline w3-label-left', 'Automatically download and install software updates?',
                'Yes', 'No', 'adm.update_install', adm.update_install, 'admin_radio_YN_cb')
+         ),
+         w3_div('ui-admin-update-policy-row',
+            w3_switch_label('w3-label-inline w3-label-left', 'Reboot after an automatic update?',
+               'Yes', 'No', 'adm.update_reboot', adm.update_reboot, 'admin_radio_YN_cb')
          ),
          w3_div('w3-margin-T-16',
             w3_select('/w3-label-inline/w3-width-auto', 'After a restart', '', 'adm.restart_update',
@@ -1272,7 +1276,9 @@ function update_html()
          ),
          w3_div('w3-valign ui-admin-update-action',
             '<b>Force software reinstall</b>' +
-            w3_button('w3-aqua w3-margin', 'Install now', 'update_build_now_cb')
+            w3_div('ui-admin-update-action-buttons',
+               w3_button('w3-aqua w3-margin', 'Install', 'update_build_now_cb') +
+               w3_button('w3-red w3-margin', 'Install & reboot', 'update_build_reboot_now_cb'))
          )
       );
 
@@ -1310,9 +1316,14 @@ function update_check_now_cb(id, idx)
 
 function update_build_now_cb(id, idx)
 {
-	ext_send('SET force_check=1 force_build=1');
+	ext_send('SET force_check=1 force_build=1 force_reboot=0');
 	w3_el('id-msg-update').innerHTML = w3_icon('', 'fa-refresh fa-spin', 24) + 'Updating';
+}
 
+function update_build_reboot_now_cb(id, idx)
+{
+	ext_send('SET force_check=1 force_build=1 force_reboot=1');
+	w3_el('id-msg-update').innerHTML = w3_icon('', 'fa-refresh fa-spin', 24) + 'Updating';
    w3_show_block('id-build-reboot');
 }
 
