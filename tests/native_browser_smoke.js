@@ -1820,10 +1820,12 @@ function fetchRawResponse(headers, path) {
             });
             const releaseList = document.getElementById('id-update-release-list');
             const releaseDetails = document.getElementById('id-update-release-details');
+            const releaseActions = document.getElementById('id-update-release-actions');
             const releaseCards = Array.from(releaseList?.querySelectorAll('.ui-admin-release-card') || []);
             const selectedRelease = releaseList?.querySelector('.ui-admin-release-card.is-selected');
             const listRect = releaseList.getBoundingClientRect();
             const detailsRect = releaseDetails.getBoundingClientRect();
+            const actionsRect = releaseActions.getBoundingClientRect();
             return {
                 actions,
                 policyControls,
@@ -1835,7 +1837,10 @@ function fetchRawResponse(headers, path) {
                     details: w3_el('id-update-release-details')?.textContent,
                     local: document.querySelector('.ui-admin-release-local')?.textContent,
                     desktopFlow: listRect.left < detailsRect.left &&
-                        Math.abs(listRect.top - detailsRect.top) <= 1
+                        Math.abs(listRect.top - detailsRect.top) <= 1,
+                    separateActions: !releaseDetails.contains(
+                        document.getElementById('id-update-release-install')) &&
+                        actionsRect.top >= Math.max(listRect.bottom, detailsRect.bottom)
                 }
             };
         });
@@ -2741,6 +2746,7 @@ function fetchRawResponse(headers, path) {
             !adminUpgrade.releasePicker.details?.includes('newest.zip') ||
             adminUpgrade.releasePicker.local !== 'Available on SD card' ||
             !adminUpgrade.releasePicker.desktopFlow ||
+            !adminUpgrade.releasePicker.separateActions ||
             !adminUpgradeMobile.verticalFlow ||
             adminUpgradeMobile.documentOverflow)
             throw new Error(`invalid admin upgrade actions: ${JSON.stringify(adminUpgrade)}`);

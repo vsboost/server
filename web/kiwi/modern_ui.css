@@ -2348,6 +2348,14 @@
    min-width: 0;
 }
 
+.ui-modern .ui-admin-release-actions {
+   display: flex;
+   justify-content: flex-end;
+   margin-top: var(--ui-space-4);
+   padding-top: var(--ui-space-3);
+   border-top: 1px solid var(--ui-border);
+}
+
 .ui-modern .ui-admin-release-picker ul {
    margin: var(--ui-space-2) 0;
    padding-left: 1.25rem;
@@ -3439,6 +3447,20 @@
 
    .ui-modern .ui-admin-release-details {
       margin-top: var(--ui-space-3);
+   }
+
+   .ui-modern .ui-admin-release-actions,
+   .ui-modern .ui-admin-release-actions .ui-admin-update-action-buttons {
+      align-items: stretch;
+      width: 100%;
+   }
+
+   .ui-modern .ui-admin-release-actions .ui-admin-update-action-buttons {
+      flex-direction: column;
+   }
+
+   .ui-modern .ui-admin-release-actions button {
+      width: 100%;
    }
 
    .ui-modern .ui-admin-runtime-grid,

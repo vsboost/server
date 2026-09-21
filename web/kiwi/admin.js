@@ -1360,6 +1360,11 @@ function update_release_list_cb(response)
          '<div id="id-update-release-list" class="ui-admin-release-list" role="listbox" ' +
             'aria-label="Available releases"></div>' +
          '<div id="id-update-release-details" class="ui-admin-release-details"></div>' +
+      '</div>' +
+      '<div id="id-update-release-actions" class="ui-admin-release-actions">' +
+         w3_div('ui-admin-update-action-buttons',
+            '<button id="id-update-release-install" class="w3-button w3-aqua">Install</button>' +
+            '<button id="id-update-release-reboot" class="w3-button w3-red">Install &amp; reboot</button>') +
       '</div>';
    var list = w3_el('id-update-release-list');
    ids.forEach(function(id) {
@@ -1377,6 +1382,8 @@ function update_release_list_cb(response)
       card.onclick = function() { update_release_select_cb(id); };
       list.appendChild(card);
    });
+   w3_el('id-update-release-install').onclick = function() { update_release_install_cb(false); };
+   w3_el('id-update-release-reboot').onclick = function() { update_release_install_cb(true); };
    update_release_select_cb(ids[0]);
 }
 
@@ -1408,12 +1415,7 @@ function update_release_select_cb(release_id)
       '<div><b>'+ update_escape_html(release.date || id) +'</b> — '+
          update_escape_html(download.filename || '') +'</div>' +
       (release.local? '<div class="ui-admin-release-local">Available on SD card</div>' : '') +
-      (changes? '<ul>'+ changes +'</ul>' : '') +
-      w3_div('ui-admin-update-action-buttons',
-         '<button id="id-update-release-install" class="w3-button w3-aqua">Install</button>' +
-         '<button id="id-update-release-reboot" class="w3-button w3-red">Install &amp; reboot</button>');
-   w3_el('id-update-release-install').onclick = function() { update_release_install_cb(false); };
-   w3_el('id-update-release-reboot').onclick = function() { update_release_install_cb(true); };
+      (changes? '<ul>'+ changes +'</ul>' : '');
 }
 
 function update_release_install_cb(reboot)
