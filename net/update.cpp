@@ -397,6 +397,17 @@ static bool download_release(conn_t* conn, bool report, const release_t& release
     return false;
 }
 
+static bool update_dir_create()
+{
+    std::string dir = update_dir();
+    if (mkdir(dir.c_str(), 0755) == 0 || errno == EEXIST)
+        return true;
+
+    lprintf("UPDATE: unable to create %s: %s\n", dir.c_str(), strerror(errno));
+    fail_reason = FAIL_INSTALL;
+    return false;
+}
+
 static int update_build(conn_t* conn, bool report, const release_t& release)
 {
     sd_enable(true);
@@ -405,12 +416,8 @@ static int update_build(conn_t* conn, bool report, const release_t& release)
     std::string verify_command = "unzip -tq " + archive + " >/dev/null";
     std::string install_command = "unzip -oq " + archive + " -d " + update_root() + " -x 'config/*'";
 
-    std::string dir = update_dir();
-    if (mkdir(dir.c_str(), 0755) != 0 && errno != EEXIST) {
-        lprintf("UPDATE: unable to create %s: %s\n", dir.c_str(), strerror(errno));
-        fail_reason = FAIL_INSTALL;
+    if (!update_dir_create())
         goto exit;
-    }
 
     if (!download_release(conn, report, release)) {
         fail_reason = FAIL_DOWNLOAD;
@@ -448,7 +455,7 @@ static void _update_task(void* param) {
     bool force_build_reboot = (conn && (conn->update_check == FORCE_BUILD_REBOOT ||
                                         conn->update_check == FORCE_RELEASE_BUILD_REBOOT));
     bool report = (force_check || force_build);
-    bool release_changed, update_install;
+    bool release_changed, update_download, update_install;
     int status;
     kstr_t* metadata = NULL;
     release_t release;
@@ -487,6 +494,7 @@ static void _update_task(void* param) {
     pending_filename = release.filename;
     pending_changes = release.changes;
     release_changed = (pending_maj > version_maj || (pending_maj == version_maj && pending_min > version_min));
+    update_download = (admcfg_bool("update_check", NULL, CFG_REQUIRED) == true);
     update_install = (admcfg_bool("update_install", NULL, CFG_REQUIRED) == true);
     kstr_free(metadata);
 
@@ -511,8 +519,17 @@ static void _update_task(void* param) {
     else
 
         if (release_changed && !update_install) {
-        lprintf("UPDATE: release changed (current %d.%d, new %d.%d), but update install not enabled\n",
+        lprintf("UPDATE: release changed (current %d.%d, new %d.%d), automatic install not enabled\n",
                 version_maj, version_min, pending_maj, pending_min);
+
+        if (update_download) {
+            lprintf("UPDATE: downloading release package for later installation\n");
+            sd_enable(true);
+            bool downloaded = update_dir_create() && download_release(NULL, false, release);
+            sd_enable(false);
+            if (!downloaded)
+                lprintf("UPDATE: automatic release download failed\n");
+        }
     }
     else
 

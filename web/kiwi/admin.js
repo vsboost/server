@@ -1264,11 +1264,29 @@ function update_html()
       admin_section('Available update', 'Version and change log for the latest release',
          w3_div('id-update-result'), 'ui-admin-section-wide'));
 
+   var settings =
+      admin_section('Update settings', 'Choose the release channel and automatic update behavior',
+         w3_div('ui-admin-update-policy',
+            w3_div('ui-admin-update-policy-row',
+               w3_switch_label('w3-label-inline w3-label-left', 'Release channel',
+                  'Alpha', 'Stable', 'adm.update_channel', adm.update_channel, 'update_channel_cb') +
+               w3_switch_label('w3-label-inline w3-label-left', 'Auto download',
+                  'On', 'Off', 'adm.update_check', adm.update_check, 'admin_radio_YN_cb') +
+               w3_switch_label('w3-label-inline w3-label-left', 'Auto install',
+                  'On', 'Off', 'adm.update_install', adm.update_install, 'admin_radio_YN_cb')
+            ) +
+            w3_div('ui-admin-update-policy-note',
+               'Alpha checks the newest release. Stable checks the latest tested release. ' +
+               'Auto download caches an available package; Auto install extracts it to the SD card.')
+         ),
+         'ui-admin-section-wide');
+
    var content =
       header +
       '<div class="ui-admin-section-grid">' +
          admin_section('Update status', 'Current update activity', status, 'ui-admin-section-wide') +
          result +
+         settings +
          admin_section('Previous releases',
             'Install a release package already cached on the SD card.',
             w3_button_path('w3-aqua', 'id-update-previous-releases', 'Previous Releases',
@@ -1312,6 +1330,17 @@ function update_result_progress(message)
    var progress = w3_el('id-update-result-progress');
    if (progress)
       progress.innerHTML = update_escape_html(message || '');
+}
+
+function update_channel_cb(path, idx, first)
+{
+   admin_radio_YN_cb(path, idx, first);
+   if (first) return;
+
+   update_primary_set('checking');
+   update_progress(true, 'Checking for updates');
+   w3_innerHTML('id-msg-update', '');
+   ext_send('SET force_check=1 force_build=0');
 }
 
 function update_primary_cb()

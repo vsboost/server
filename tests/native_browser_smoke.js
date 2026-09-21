@@ -1792,7 +1792,7 @@ function fetchJson(url) {
         await adminPage.waitForSelector('.id-update-primary-action', { state: 'attached' });
         const fixtureAction = adminPage.locator('.id-update-primary-action');
         const fixtureProgress = adminPage.locator('.id-update-progress');
-        await adminPage.evaluate(() => update_primary_cb());
+        await adminPage.evaluate(() => update_channel_cb('adm.update_channel', 0, false));
         const fixtureCheckStart = {
             label: (await fixtureAction.textContent()).trim(),
             disabled: await fixtureAction.isDisabled(),
@@ -2167,7 +2167,13 @@ function fetchJson(url) {
                     heading => heading.textContent),
                 statusHook: !!page.querySelector('.id-msg-update'),
                 primaryAction: page.querySelector('.id-update-primary-action')?.textContent.trim(),
-                previousAction: page.querySelector('.id-update-previous-releases')?.textContent.trim()
+                previousAction: page.querySelector('.id-update-previous-releases')?.textContent.trim(),
+                updateSettings: {
+                    alphaStable: page.textContent.includes('Release channel') &&
+                        page.textContent.includes('Alpha') && page.textContent.includes('Stable'),
+                    autoDownload: page.textContent.includes('Auto download'),
+                    autoInstall: page.textContent.includes('Auto install')
+                }
             };
         });
         await clickAdminNav('id-nav-network');
@@ -2974,10 +2980,13 @@ function fetchJson(url) {
             throw new Error(`invalid modern admin DX page: ${JSON.stringify(adminDX)}`);
         if (adminUpdate.heading !== 'Updates' ||
             adminUpdate.sections.join(',') !==
-                'Update status,Available update,Previous releases' ||
+                'Update status,Available update,Update settings,Previous releases' ||
             !adminUpdate.statusHook ||
             !['Check for updates', 'Install', 'Restart'].includes(adminUpdate.primaryAction) ||
-            adminUpdate.previousAction !== 'Previous Releases')
+            adminUpdate.previousAction !== 'Previous Releases' ||
+            !adminUpdate.updateSettings.alphaStable ||
+            !adminUpdate.updateSettings.autoDownload ||
+            !adminUpdate.updateSettings.autoInstall)
             throw new Error(`invalid modern admin Update page: ${JSON.stringify(adminUpdate)}`);
         if (adminNetwork.heading !== 'Network' ||
             adminNetwork.sections.join(',') !==
