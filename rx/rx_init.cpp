@@ -411,9 +411,6 @@ void update_vars_from_config(bool called_at_init) {
         admcfg_default_string("tlimit_exempt_pwd", "", &update_admcfg);
     }
 
-    admcfg_default_bool("restrict_mode_enabled", false, &update_admcfg);
-    admcfg_default_string("restrict_mode_password", "", &update_admcfg);
-
     // sdr.hu => rx.kiwisdr.com in status msg
     char* status_msg = (char*)cfg_string("status_msg", NULL, CFG_REQUIRED);
     bool caller_must_free;
@@ -600,7 +597,6 @@ void update_vars_from_config(bool called_at_init) {
 
         cfg_string_free(key);
     }
-
 #endif
 
     // FIXME: resolve problem of ip_address.xxx vs ip_address:{xxx} in .json files

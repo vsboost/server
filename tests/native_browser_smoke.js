@@ -541,12 +541,6 @@ function fetchJson(url) {
                 window.ws_snd && window.ws_snd.readyState === WebSocket.OPEN &&
                 window.ws_wf && window.ws_wf.readyState === WebSocket.OPEN;
         }, null, { timeout: 30000 });
-        const restrictDefaultState = await page.evaluate(() => ({
-            unlockVisible: !!document.getElementById('id-restrict.pwd'),
-            enabled: window.restrict_mode?.enabled
-        }));
-        if (restrictDefaultState.unlockVisible || restrictDefaultState.enabled !== 0)
-            throw new Error(`restrict mode should default to off: ${JSON.stringify(restrictDefaultState)}`);
         await page.evaluate(() => {
             window.nativeSocketCloses = {};
             for (const [name, socket] of [
@@ -2318,11 +2312,7 @@ function fetchJson(url) {
                 sections: Array.from(page.querySelectorAll('.ui-admin-section > header h3'),
                     heading => heading.textContent),
                 userPassword: !!document.getElementById('id-adm.user_password'),
-                adminPassword: !!document.getElementById('id-adm.admin_password'),
-                restrictEnabled: document.getElementsByClassName(
-                    'id-adm.restrict_mode_enabled').length === 2,
-                restrictPassword: !!document.getElementById('id-adm.restrict_mode_password'),
-                restrictPasswordStatus: !!document.getElementById('id-restrict-mode-password-status')
+                adminPassword: !!document.getElementById('id-adm.admin_password')
             };
         });
         await adminPage.setViewportSize({ width: 390, height: 844 });
@@ -3046,10 +3036,7 @@ function fetchJson(url) {
             adminSecurity.sections.join(',') !==
                 'Passwords & listener access,Privileged & shared access,Admin session resilience' ||
             !adminSecurity.userPassword ||
-            !adminSecurity.adminPassword ||
-            !adminSecurity.restrictEnabled ||
-            !adminSecurity.restrictPassword ||
-            !adminSecurity.restrictPasswordStatus)
+            !adminSecurity.adminPassword)
             throw new Error(
                 `invalid modern admin Security page: ${JSON.stringify(adminSecurity)}`);
         if (adminExtensionsMobile.navDisplay !== 'flex' ||

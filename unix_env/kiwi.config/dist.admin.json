@@ -4,8 +4,6 @@
 "user_auto_login":true,
 "admin_password":"",
 "admin_auto_login":true,
-"restrict_mode_enabled":false,
-"restrict_mode_password":"",
 "port":8073,
 "enable_gps":true,
 "update_check":false,

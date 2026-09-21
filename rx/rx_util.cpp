@@ -42,7 +42,6 @@ Boston, MA  02110-1301, USA.
 #include "security.h"
 #include "options.h"
 #include "services.h"
-#include "restrict.h"
 
 #include "wspr.h"
 #include "FT8.h"
@@ -693,7 +692,6 @@ bool save_config(u2_t key, conn_t* conn, char* cmd) {
             break;
         case CMD_SAVE_DXCFG:
             dxcfg_save_json(sp);
-            restrict_mode_reload_policy();
             break;
         case CMD_SAVE_ADM:
             admcfg_save_json(sp);

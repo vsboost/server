@@ -3329,28 +3329,6 @@ function security_html()
 		'<hr>' +
 		w3_inline_percent('w3-container/w3-hspace-16 w3-text-teal',
 			w3_div('',
-            w3_switch_label('', 'Restrict receiver tuning<br>to HAM and broadcast bands?',
-               'Yes', 'No', 'adm.restrict_mode_enabled', adm.restrict_mode_enabled, 'admin_radio_YN_cb')
-			), 25,
-
-			w3_div('w3-text-black',
-				'Non-admin listeners may tune only Amateur and Broadcast entries from the band configuration. ' +
-				'They can enter this password in the receiver RF tab to unlock their current session.'
-			), 33,
-
-			w3_div(''), 1,
-
-			w3_div('',
-				w3_input('w3-encrypted', 'Set restrict mode password', 'adm.restrict_mode_password', '',
-					'security_set_rpw_cb', 'Enter a new password to replace the existing one') +
-				w3_div('w3-margin-T-4 w3-text-black||id="id-restrict-mode-password-status"',
-					'The stored password is not displayed.')
-			), 33
-		) +
-
-		'<hr>' +
-		w3_inline_percent('w3-container/w3-hspace-16 w3-text-teal',
-			w3_div('',
             w3_switch_label('', 'Restrict console connections <br> to the local network?',
                'Yes', 'No', 'adm.console_local', adm.console_local, 'admin_radio_YN_cb')
 			), 25,
@@ -3427,7 +3405,6 @@ function security_focus(id)
 {
 	admin_set_decoded_value('adm.user_password');
 	admin_set_decoded_value('adm.admin_password');
-	w3_set_value('adm.restrict_mode_password', '');
 	//w3_el('id-security-json').innerHTML = w3_div('w3-padding w3-scroll', JSON.stringify(cfg));
 }
 
@@ -3441,28 +3418,6 @@ function security_set_apw_cb(path, val, first)
 {
    adm.admin_pwd_seq = +adm.admin_pwd_seq + 1;
    w3_string_set_cfg_cb(path, val, first);
-}
-
-function security_set_rpw_cb(path, val, first)
-{
-   if (first || val == '') return;
-   ext_send('SET rpwd_new='+ encodeURIComponent(val));
-   w3_set_value(path, '');
-   w3_innerHTML('id-restrict-mode-password-status', 'Saving password...');
-}
-
-function security_restrict_password_cb(saved)
-{
-   var p = saved.split(',');
-   var status = w3_el('id-restrict-mode-password-status');
-   if (!status) return;
-
-   if (+p[0] && p[1]) {
-      adm.restrict_mode_password = p[1];
-      status.innerHTML = 'Password saved as a salted SHA-256 hash.';
-   } else {
-      status.innerHTML = 'Password was not saved.';
-   }
 }
 
 
@@ -4049,10 +4004,6 @@ function admin_msg(param)
 		case "dx_size":
 			dx_size(param[1]);
 			break;
-
-      case "restrict_password":
-         security_restrict_password_cb(param[1]);
-         break;
 		
 		case "admin_mkr":
 			var mkr = param[1];

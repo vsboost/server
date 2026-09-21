@@ -55,7 +55,6 @@ enum rx_common_cmd_key_e {
     CMD_FORCE_CLOSE_ADMIN,
     CMD_GET_AUTHKEY,
     CMD_CLK_ADJ,
-    CMD_SET_RESTRICT_PASSWORD,
     CMD_SERVER_DE_CLIENT,
     CMD_X_DEBUG
 };

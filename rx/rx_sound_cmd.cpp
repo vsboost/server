@@ -57,7 +57,6 @@ Boston, MA  02110-1301, USA.
 #include "rx_sound_cmd.h"
 #include "rx_waterfall.h"
 #include "rx_filter.h"
-#include "restrict.h"
 #include "wdsp.h"
 #include "peri.h"
 
@@ -138,12 +137,6 @@ void rx_sound_cmd(conn_t* conn, double frate, int n, char* cmd) {
 
             bool new_freq = false;
             if (s->freq != _freq) {
-                if (!restrict_mode_tune_allowed(conn, _freq)) {
-                    restrict_mode_send_state(conn);
-                    send_msg(conn, false, "MSG restrict_tune_rejected=%.3f", s->freq);
-                    kiwi_asfree(mode_m);
-                    return;
-                }
                 s->freq = _freq;
                 double freq_kHz = s->freq * kHz;
                 double freq_inv_kHz = ui_srate - freq_kHz;
@@ -272,18 +265,6 @@ void rx_sound_cmd(conn_t* conn, double frate, int n, char* cmd) {
             if (!no_mode_change) conn->mode = s->mode;
         }
         kiwi_asfree(mode_m);
-        break;
-    }
-
-    case CMD_RESTRICT_PWD: {
-        char* password = NULL;
-        if (sscanf(cmd, "SET rpw=%256ms", &password) == 1) {
-            kiwi_str_decode_inplace(password);
-            bool allowed = restrict_mode_unlock(conn, password);
-            kiwi_asfree(password);
-            restrict_mode_send_state(conn);
-            send_msg(conn, false, "MSG restrict_result=%d", allowed);
-        }
         break;
     }
 

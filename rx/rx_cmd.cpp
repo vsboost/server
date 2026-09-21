@@ -44,7 +44,6 @@ Boston, MA  02110-1301, USA.
 
 #include "data_pump.h"
 #include "dx.h"
-#include "restrict.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -133,7 +132,6 @@ static str_hashes_t rx_common_cmd_hashes[] = {
     { "SET close_", CMD_FORCE_CLOSE_ADMIN },
     { "SET get_au", CMD_GET_AUTHKEY },
     { "SET clk_ad", CMD_CLK_ADJ },
-    { "SET rpwd_n", CMD_SET_RESTRICT_PASSWORD },
     { "SERVER DE ", CMD_SERVER_DE_CLIENT },
     { "SET x-DEBU", CMD_X_DEBUG },
     { 0 }
@@ -741,16 +739,6 @@ bool rx_common_cmd(int stream_type, conn_t* conn, char* cmd) {
                                 continue;
                             if (c->rx_channel == chan || (c->type == STREAM_EXT && c->rx_channel == chan)) {
                                 c->auth_admin = true;
-                            }
-                        }
-
-                        restrict_mode_send_state(conn);
-                        if (!stream_admin_or_mfg && chan != -1) {
-                            for (conn_t* c = conns; c < &conns[N_CONNS]; c++) {
-                                if (c->valid && c->rx_channel == chan &&
-                                    (c->type == STREAM_SOUND || c->type == STREAM_WATERFALL || c->type == STREAM_EXT)) {
-                                    restrict_mode_send_state(c);
-                                }
                             }
                         }
                     }
@@ -2240,31 +2228,6 @@ bool rx_common_cmd(int stream_type, conn_t* conn, char* cmd) {
 
             clock_manual_adj(clk_adj);
             printf("MANUAL clk_adj = %d\n", clk_adj);
-            return true;
-        }
-        break;
-    }
-
-    case CMD_SET_RESTRICT_PASSWORD: {
-        char* password = NULL;
-        if (sscanf(cmd, "SET rpwd_new=%256ms", &password) == 1) {
-            if (conn->type != STREAM_ADMIN || conn->auth_admin == false) {
-                clprintf(conn, "restrict_password NO ADMIN AUTH %s\n", conn->remote_ip);
-                kiwi_asfree(password);
-                return true;
-            }
-
-            kiwi_str_decode_inplace(password);
-            bool saved = restrict_mode_set_password(password);
-            memset(password, 0, strlen(password));
-            kiwi_asfree(password);
-            if (saved) {
-                const char* configured = admcfg_string("restrict_mode_password", NULL, CFG_REQUIRED);
-                send_msg(conn, false, "MSG restrict_password=1,%s", configured);
-                cfg_string_free(configured);
-            } else {
-                send_msg(conn, false, "MSG restrict_password=0");
-            }
             return true;
         }
         break;

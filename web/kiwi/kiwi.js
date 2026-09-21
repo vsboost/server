@@ -3292,18 +3292,6 @@ function kiwi_msg(param, ws)
 			extint.isAdmin_cb(param[1]);
 			break;
 
-		case "restrict":
-			restrict_mode_state_cb(param[1]);
-			break;
-
-		case "restrict_result":
-			restrict_mode_result_cb(param[1]);
-			break;
-
-		case "restrict_tune_rejected":
-			restrict_mode_tune_rejected_cb(param[1]);
-			break;
-
 		case "is_local":
 		   var p = param[1].split(',');
 		   console.log('kiwi_msg rx_chan='+ p[0] +' is_local='+ p[1]);
