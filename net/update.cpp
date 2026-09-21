@@ -398,21 +398,6 @@ static void _update_task(void* param) {
     lprintf("UPDATE: checking for updates\n");
     if (force_check) update_pending = false; // don't let pending status override version reporting when a forced check
 
-    if (report) report_progress(conn, "Checking internet connectivity");
-#define PING_INET "ping -qc2 1.1.1.1 >/dev/null 2>&1"
-    status = non_blocking_cmd_system_child("kiwi.ck_inet", PING_INET, POLL_MSEC(250));
-    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-
-#define PING_INET2 "ping -qc2 8.8.8.8 >/dev/null 2>&1"
-        status = non_blocking_cmd_system_child("kiwi.ck_inet", PING_INET2, POLL_MSEC(250));
-        if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-            lprintf("UPDATE: No Internet connection? (can't ping 1.1.1.1 or 8.8.8.8)\n");
-            fail_reason = FAIL_NO_INET;
-            if (report) report_result(conn);
-            goto common_return;
-        }
-    }
-
     if (report) report_progress(conn, "Getting latest release information");
     if (force_release)
         metadata_url = "https://www.rx-888.com/api/releases/" + requested_release_date;
@@ -422,7 +407,7 @@ static void _update_task(void* param) {
     metadata = curl_get(metadata_url.c_str(), 15, &status);
 
     if (metadata == NULL || status != 0 || !release_parse(kstr_sp(metadata), &release)) {
-        lprintf("UPDATE: failed to get valid latest release information from server\n");
+        lprintf("UPDATE: failed to get valid latest release information from server (curl status %d)\n", status);
         if (metadata) kstr_free(metadata);
         fail_reason = FAIL_VERSION;
         if (report) report_result(conn);

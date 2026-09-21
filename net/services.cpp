@@ -877,10 +877,18 @@ void init_curl()
 
 // Custom write callback function to handle data and write it to a buffer
 static size_t WriteToBuffer(void *contents, size_t size, size_t nmemb, void *userp) {
+    if (size != 0 && nmemb > (size_t) -1 / size)
+        return 0;
+
     size_t totalSize = size * nmemb;
     kstr_t **buffer = static_cast<kstr_t**>(userp);
-    ((char*)contents)[totalSize] = '\0';
-    *buffer = kstr_cat(*buffer, static_cast<char*>(contents));
+    char* chunk = (char*) malloc(totalSize + 1);
+    if (chunk == NULL)
+        return 0;
+
+    memcpy(chunk, contents, totalSize);
+    chunk[totalSize] = '\0';
+    *buffer = kstr_cat(*buffer, kstr_wrap(chunk));
 
     return totalSize;
 }
