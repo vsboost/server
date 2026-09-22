@@ -44,6 +44,7 @@ Boston, MA  02110-1301, USA.
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include <set>
 #include <string>
 
 static bool update_pending = false, update_task_running = false, update_in_progress = false;
@@ -221,6 +222,24 @@ static bool is_safe_release_filename(const std::string& filename)
     for (size_t i = 0; i < filename.size(); i++) {
         unsigned char ch = filename[i];
         if (!isalnum(ch) && ch != '.' && ch != '_' && ch != '-')
+            return false;
+    }
+    return true;
+}
+
+static bool is_sd_image_release_filename(const std::string& filename)
+{
+    static const char* prefix = "web-888-alpine-";
+    const size_t prefix_len = strlen(prefix);
+    const size_t date_len = 8;
+    const size_t suffix_len = 4;
+    if (filename.compare(0, prefix_len, prefix) != 0 ||
+        filename.size() < prefix_len + date_len + suffix_len ||
+        filename.compare(filename.size() - suffix_len, suffix_len, ".zip") != 0)
+        return false;
+    size_t date_start = filename.size() - suffix_len - date_len;
+    for (size_t i = date_start; i < date_start + date_len; i++) {
+        if (!isdigit((unsigned char) filename[i]))
             return false;
     }
     return true;
@@ -405,17 +424,27 @@ static int update_build(conn_t* conn, bool report, const release_t& release)
     sd_enable(true);
     int status = EXIT_FAILURE;
     std::string archive = update_dir() + "/" + release.filename;
-    std::string verify_command = "unzip -tq " + archive + " >/dev/null";
-    std::string install_command = "unzip -oq " + archive + " -d " + update_root() + " -x 'config/*'";
+    std::string sd_image_archive = std::string(update_root()) + "/" + release.filename;
+    std::string verify_command, install_command;
+    struct stat st;
+    bool use_sd_image = is_sd_image_release_filename(release.filename) &&
+        stat(sd_image_archive.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
+        sha256_file_matches(sd_image_archive.c_str(), release.sha256);
+    if (use_sd_image) {
+        archive = sd_image_archive;
+        if (report) report_progress(conn, "Using verified release package from SD card");
+    } else {
+        if (!update_dir_create())
+            goto exit;
 
-    if (!update_dir_create())
-        goto exit;
-
-    if (!download_release(conn, report, release)) {
-        fail_reason = FAIL_DOWNLOAD;
-        goto exit;
+        if (!download_release(conn, report, release)) {
+            fail_reason = FAIL_DOWNLOAD;
+            goto exit;
+        }
     }
 
+    verify_command = "unzip -tq " + archive + " >/dev/null";
+    install_command = "unzip -oq " + archive + " -d " + update_root() + " -x 'config/*'";
     if (report) report_progress(conn, "Verifying release archive");
     if (!archive_paths_safe(archive) || system(verify_command.c_str()) != 0) {
         lprintf("UPDATE: release archive is invalid or contains unsafe paths\n");
@@ -640,11 +669,10 @@ void update_send_release_list(conn_t* conn)
         return;
     }
 
-    std::string response = "{\"local\":[";
+    std::set<std::string> local_releases;
     std::string dir = update_dir();
     DIR* update_dp = opendir(dir.c_str());
     if (update_dp != NULL) {
-        bool first = true;
         struct dirent* entry;
         while ((entry = readdir(update_dp)) != NULL) {
             std::string filename = entry->d_name;
@@ -654,12 +682,35 @@ void update_send_release_list(conn_t* conn)
             struct stat st;
             if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
                 continue;
-            if (!first)
-                response += ",";
-            response += "\"" + filename + "\"";
-            first = false;
+            local_releases.insert(filename);
         }
         closedir(update_dp);
+    }
+
+    DIR* sd_dp = opendir(update_root());
+    if (sd_dp != NULL) {
+        struct dirent* entry;
+        while ((entry = readdir(sd_dp)) != NULL) {
+            std::string filename = entry->d_name;
+            if (!is_sd_image_release_filename(filename))
+                continue;
+            std::string path = std::string(update_root()) + "/" + filename;
+            struct stat st;
+            if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+                continue;
+            local_releases.insert(filename);
+        }
+        closedir(sd_dp);
+    }
+
+    std::string response = "{\"local\":[";
+    bool first = true;
+    for (std::set<std::string>::const_iterator it = local_releases.begin();
+            it != local_releases.end(); ++it) {
+        if (!first)
+            response += ",";
+        response += "\"" + *it + "\"";
+        first = false;
     }
     response += "],";
     response += json + 1;
