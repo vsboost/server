@@ -1246,6 +1246,7 @@ function connect_proxy_server_cb(path, val)
 
 function update_html()
 {
+   var update_channel = adm.update_channel !== false;
    var header =
       '<header class="ui-admin-page-header ui-admin-update-header">' +
          '<div><span>SOFTWARE</span><h2>Updates</h2>' +
@@ -1269,7 +1270,7 @@ function update_html()
          w3_div('ui-admin-update-policy',
             w3_div('ui-admin-update-policy-row',
                w3_switch_label('w3-label-inline w3-label-left', 'Release channel',
-                  'Alpha', 'Stable', 'adm.update_channel', adm.update_channel, 'update_channel_cb') +
+                  'Alpha', 'Stable', 'adm.update_channel', update_channel, 'update_channel_cb') +
                w3_switch_label('w3-label-inline w3-label-left', 'Auto download',
                   'On', 'Off', 'adm.update_check', adm.update_check, 'admin_radio_YN_cb') +
                w3_switch_label('w3-label-inline w3-label-left', 'Auto install',
@@ -1362,7 +1363,7 @@ function update_channel_cb(path, idx, first)
    update_primary_set('checking');
    update_progress(true, 'Checking for updates');
    w3_innerHTML('id-msg-update', '');
-   ext_send('SET force_check=1 force_build=0');
+   ext_send_after_cfg_save('SET force_check=1 force_build=0');
 }
 
 function update_primary_cb()

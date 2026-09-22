@@ -488,7 +488,7 @@ static void _update_task(void* param) {
 
     bool err;
     bool alpha = admcfg_bool("update_channel", &err, CFG_OPTIONAL);
-    if (err) alpha = false;
+    if (err) alpha = true;
 
     lprintf("UPDATE: checking for updates\n");
     if (force_check) update_pending = false; // don't let pending status override version reporting when a forced check
