@@ -1706,6 +1706,27 @@ function fetchJson(url) {
             document.querySelectorAll('.ui-usage-heat-cell').length === 168 &&
             document.querySelectorAll('.ui-usage-summary-card').length === 8,
             null, { timeout: 10000 });
+        const emptyUsageRange = await adminPage.evaluate(async () => {
+            const now = Date.now() / 1000;
+            const future = (usage.heatmap?.cells || []).filter(cell => cell.start > now);
+            const unavailable = Array.from(document.querySelectorAll('.ui-usage-heat-cell'))
+                .find(cell => cell.classList.contains('is-unavailable'));
+            if (!unavailable) return null;
+            unavailable.click();
+            await new Promise(resolve => setTimeout(resolve, 300));
+            return {
+                futureSlotsAreZero: future.length > 0 && future.every(cell =>
+                    !cell.available && cell.listener_minutes === 0 &&
+                    cell.sessions === 0 && cell.unique === 0),
+                dayText: document.querySelector('#id-usage-day')?.textContent || '',
+                hourText: document.querySelector('#id-usage-hour')?.textContent || ''
+            };
+        });
+        if (!emptyUsageRange || !emptyUsageRange.futureSlotsAreZero ||
+            /[1-9]\d{14,}/.test(emptyUsageRange.dayText) ||
+            emptyUsageRange.hourText.includes('214053043954515968')) {
+            throw new Error(`invalid empty usage range: ${JSON.stringify(emptyUsageRange)}`);
+        }
         await adminPage.evaluate(() => ext_send('SET usage_test_stress=5000'));
         await adminPage.waitForTimeout(500);
         await adminPage.evaluate(() => usage_refresh());

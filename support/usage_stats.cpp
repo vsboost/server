@@ -681,12 +681,13 @@ static char* read_file_alloc(const std::string& path)
 
 static bool load_hour(s64_t epoch, persisted_hour_t* out, hll_t* hll = NULL)
 {
+    memset(out, 0, sizeof(*out));
+    if (hll) memset(hll, 0, sizeof(*hll));
     char date[16], hour[4];
     format_hour(epoch, date, sizeof(date), hour, sizeof(hour));
     std::string path = std::string(usage_root()) + "/hourly/" + date + "/" + hour + ".json";
     char* json = read_file_alloc(path);
     if (!json) return false;
-    memset(out, 0, sizeof(*out));
     u64_t v = 0;
     bool ok = extract_u64(json, "hour_start", &v);
     out->hour_start = v;
@@ -712,9 +713,10 @@ static bool load_hour(s64_t epoch, persisted_hour_t* out, hll_t* hll = NULL)
 
 static bool load_rollup_file(const std::string& path, persisted_hour_t* out, hll_t* hll)
 {
+    memset(out, 0, sizeof(*out));
+    if (hll) memset(hll, 0, sizeof(*hll));
     char* json = read_file_alloc(path);
     if (!json) return false;
-    memset(out, 0, sizeof(*out));
     u64_t v = 0;
     bool ok = extract_u64(json, "start", &v);
     out->hour_start = v;
@@ -1102,6 +1104,8 @@ void usage_stats_init()
     load_or_create_key();
     current_hour.hour_start = hour_floor(time(NULL));
     initialized = identity_key_valid;
+    if (atexit(usage_stats_flush_partial) != 0)
+        set_error("unable to register usage statistics shutdown flush");
     lprintf("USAGE: fixed memory %zu bytes, enabled=%d root=%s\n",
             sizeof(current_hour) + sizeof(active), enabled, usage_root());
 }
