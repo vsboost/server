@@ -10,9 +10,8 @@
 // (c) Frank DD4WH 2020_04_19
 //
 
-#include "config.h"
-#include "datatypes.h"
-#include "noise_leveler.h"
+#include "types.h"
+#include "kiwi.h"
 #include "rx_noise.h"
 #include "noise_filter.h"
 #include <arm_math.h>
@@ -38,14 +37,13 @@ struct wdsp_ANR_t {
     f32_t den_mult;
     f32_t lincr;
     f32_t ldecr;
-    NoiseLeveler leveler;
 };
 
 static wdsp_ANR_t wdsp_ANR[NOISE_TYPES][MAX_RX_CHANS];
 
 void wdsp_ANR_init(int rx_chan, nr_type_e nr_type, TYPEREAL nr_param[NOISE_PARAMS]) {
     wdsp_ANR_t* w = &wdsp_ANR[nr_type][rx_chan];
-    *w = wdsp_ANR_t();
+    memset(w, 0, sizeof(wdsp_ANR_t));
 
     w->taps = (int)nr_param[NR_TAPS];
     w->delay = (int)nr_param[NR_DLY];
@@ -104,10 +102,8 @@ void wdsp_ANR_filter(int rx_chan, nr_type_e nr_type, int ns_out, TYPEMONO16* in,
         if (nr_type == NR_AUTONOTCH)
             out_f = error; // notch filter
         else
-            out_f = w->leveler.Apply(w->d[w->in_idx], y);
+            out_f = y * 4.0; // noise reduction
 
-        if (out_f > 1.0f) out_f = 1.0f;
-        if (out_f < -1.0f) out_f = -1.0f;
         out[i] = (TYPEMONO16)MROUND(out_f * K_AMPMAX);
 
         if ((nel = error * (1.0 - w->two_mu * sigma * inv_sigp)) < 0.0) nel = -nel;

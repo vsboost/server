@@ -5,7 +5,7 @@ var noise_filter = {
    first_time: true,
 
    algo: 0,
-   algo_s: [ '(none)', 'wdsp LMS', 'original LMS', 'compact spectral NR2' ],
+   algo_s: [ '(none)', 'wdsp LMS', 'original LMS', 'spectral NR' ],
    width: 400,
    height: [ 100, 475, 400, 185 ],
    
@@ -38,7 +38,7 @@ var noise_filter = {
    NR_SPECTRAL: 3,
    spec_gain: 0,
    spec_alpha: 0.95,
-   active_snr: 12,
+   active_snr: 30,
 };
 
 function noise_filter_main()
@@ -146,11 +146,10 @@ function noise_filter_controls_html()
 
    case noise_filter.NR_SPECTRAL:
       s =
-         w3_div('w3-small w3-text-css-orange', 'Low-memory NR2-style spectral denoiser') +
          w3_div('w3-section',
-            w3_slider('', 'Output gain', 'noise_filter.spec_gain', noise_filter.spec_gain, -30, 30, 1, 'nf_spectral_gain_cb'),
-            w3_slider('', 'Speech tracking', 'noise_filter.spec_alpha', noise_filter.spec_alpha, 0.90, 0.99, 0.01, 'nf_spectral_alpha_cb'),
-            w3_slider('', 'Maximum reduction', 'noise_filter.active_snr', noise_filter.active_snr, 2, 12, 1, 'nf_spectral_asnr_cb')
+            w3_slider('', 'Gain', 'noise_filter.spec_gain', noise_filter.spec_gain, -30, 30, 1, 'nf_spectral_gain_cb'),
+            w3_slider('', 'Alpha', 'noise_filter.spec_alpha', noise_filter.spec_alpha, 0.90, 0.99, 0.01, 'nf_spectral_alpha_cb'),
+            w3_slider('', 'Active SNR', 'noise_filter.active_snr', noise_filter.active_snr, 2, 30, 1, 'nf_spectral_asnr_cb')
          );
       break;
    }
@@ -223,8 +222,7 @@ function noise_filter_init()
    // NR_SPECTRAL
 	noise_filter.spec_gain = +kiwi_storeGet('last_nr_SpecGain', cfg.nr_specGain);
 	noise_filter.spec_alpha = +kiwi_storeGet('last_nr_SpecAlpha', cfg.nr_specAlpha);
-	noise_filter.active_snr = Math.min(12, Math.max(2,
-      +kiwi_storeGet('last_nr_SpecSNR', cfg.nr_specSNR)));
+	noise_filter.active_snr = +kiwi_storeGet('last_nr_SpecSNR', cfg.nr_specSNR);
 
 	noise_filter.denoise = +kiwi_storeGet('last_nr_de', cfg.nr_de);
 	noise_filter.autonotch = +kiwi_storeGet('last_nr_an', cfg.nr_an);
@@ -255,7 +253,7 @@ function noise_filter_load_defaults()
    // NR_SPECTRAL
    noise_filter.spec_gain = cfg.nr_specGain;
    noise_filter.spec_alpha = cfg.nr_specAlpha;
-   noise_filter.active_snr = Math.min(12, Math.max(2, cfg.nr_specSNR));
+   noise_filter.active_snr = cfg.nr_specSNR;
 
 	noise_filter.denoise = cfg.nr_de;
 	noise_filter.autonotch = cfg.nr_an;
@@ -459,7 +457,7 @@ function nf_spectral_gain_cb(path, val, complete, first)
 {
    val = +val;
 	w3_num_cb(path, val);
-	w3_set_label('Output gain: '+ val +' dB', path);
+	w3_set_label('Gain: '+ val +' dB', path);
 	if (complete) {
 	   console.log(path +' dB='+ val);
       snd_send('SET nr type=0 param=0 pval='+ Math.pow(10, val/20));
@@ -471,7 +469,7 @@ function nf_spectral_alpha_cb(path, val, complete, first)
 {
    val = +val;
 	w3_num_cb(path, val);
-	w3_set_label('Speech tracking: '+ val.toFixed(2), path);
+	w3_set_label('Alpha: '+ val.toFixed(2), path);
 	if (complete) {
 	   console.log(path +'='+ val.toFixed(2));
       snd_send('SET nr type=0 param=1 pval='+ val.toFixed(2));
@@ -481,9 +479,9 @@ function nf_spectral_alpha_cb(path, val, complete, first)
 
 function nf_spectral_asnr_cb(path, val, complete, first)
 {
-   val = Math.min(12, Math.max(2, +val));
+   val = +val;
 	w3_num_cb(path, val);
-	w3_set_label('Maximum reduction: '+ val +' dB', path);
+	w3_set_label('Active SNR: '+ val +' dB', path);
 	if (complete) {
 	   console.log(path +' dB='+ val);
       snd_send('SET nr type=0 param=2 pval='+ Math.pow(10, val/10));

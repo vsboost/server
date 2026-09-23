@@ -1,9 +1,8 @@
 #pragma once
 
-#include "config.h"
 #include "datatypes.h"
-#include "noise_leveler.h"
-#include "rx_noise.h"
+#include "kiwi.h"
+#include "rx.h"
 
 #define LMSLEN    121
 #define LMSLEN_M1 (LMSLEN - 1)
@@ -27,7 +26,6 @@ private:
     TYPEREAL m_dline[MAX_DLEN + LMSLEN];
     int m_dlp;
     TYPEREAL m_lmscoef[LMSLEN];
-    NoiseLeveler m_leveler;
 };
 
 extern CLMS m_LMS[MAX_RX_CHANS][2];
