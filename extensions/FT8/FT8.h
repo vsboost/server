@@ -9,8 +9,9 @@
 
 #define FT8_PASSBAND_LO     100
 #define FT8_PASSBAND_HI     3100
-#define FST4W_PASSBAND_LO   600
-#define FST4W_PASSBAND_HI   900
+#define FST4W_PASSBAND_LO   1400
+#define FST4W_PASSBAND_HI   1600
+#define FST4W_BFO_HZ        ((FST4W_PASSBAND_LO + FST4W_PASSBAND_HI) / 2)
 
 typedef enum {
     FT8_PROTOCOL_FT8,

@@ -32,8 +32,9 @@ var ft8 = {
    },
    PASSBAND_LO: 100,
    PASSBAND_HI: 3100,
-   FST4W_PASSBAND_LO: 600,
-   FST4W_PASSBAND_HI: 900,
+   FST4W_PASSBAND_LO: 1400,
+   FST4W_PASSBAND_HI: 1600,
+   FST4W_BFO_HZ: 1500,
 
    // must set "remove_returns" so output lines with \r\n (instead of \n alone) don't produce double spacing
    console_status_msg_p: {
@@ -261,7 +262,7 @@ function ft8_freq_cb(path, idx, first)
 	   ft8_mode_cb('ft8.mode', ft8.mode_s.indexOf(mode));
 	   console.log('ft8_freq_cb: changing mode to '+ ft8.mode);
 	}
-   ext_tune(freq, 'usb', ext_zoom.ABS, 11,
+   ext_tune(ft8_tune_freq(freq), 'usb', ext_zoom.ABS, 11,
       ft8_is_fst4w()? ft8.FST4W_PASSBAND_LO : ft8.PASSBAND_LO,
       ft8_is_fst4w()? ft8.FST4W_PASSBAND_HI : ft8.PASSBAND_HI);
 }
@@ -269,6 +270,11 @@ function ft8_freq_cb(path, idx, first)
 function ft8_is_fst4w()
 {
    return ft8.mode >= ft8.FST4W_15;
+}
+
+function ft8_tune_freq(freq)
+{
+   return ft8_is_fst4w()? freq - ft8.FST4W_BFO_HZ / 1000 : freq;
 }
 
 function ft8_mode_cb(path, idx, first)
@@ -509,7 +515,7 @@ function FT8_help(show)
       var s =
          w3_text('w3-medium w3-bold w3-text-aqua', 'FT8/FT4/FST4W decoder help') +
          '<br>FST4W is a weak-signal beacon mode for LF/MF operation. Select one of the 15, 30, 60, 120, 300, 900, or 1800 second T/R periods; longer periods improve sensitivity while reducing update rate. ' +
-         'FST4W uses the 600-900 Hz audio passband and LF/MF frequency presets.<br><br>' +
+         'FST4W uses the standard 1400-1600 Hz audio passband and LF/MF frequency presets. The receiver tunes its 1500 Hz BFO below the selected center frequency.<br><br>' +
          '<br>Spots are uploaded to pskreporter.info if the <i>reporter call</i> and <i>reporter grid</i> ' +
          'fields on the admin page, extensions tab, FT8 subtab have valid entries. ' +
          'Leave the callsign field blank if you do not want any uploads to pskreporter.info ' +

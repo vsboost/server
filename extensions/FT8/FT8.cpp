@@ -371,6 +371,9 @@ static void ft8_autorun(int instance, bool initial)
     ft8_protocol_e proto = ft8_arun_proto[band];
     bool fst4w = (proto >= FT8_PROTOCOL_FST4W_15);
     bool preempt = (ft8_arun_preempt[instance] != ARUN_PREEMPT_NO);
+    double tune_freq_kHz = dial_freq_kHz;
+    if (fst4w)
+        tune_freq_kHz -= FST4W_BFO_HZ / 1e3;
     char *ident_user;
     if (fst4w) {
         asprintf(&ident_user, "FST4W-%d-%s", kFST4_TR_periods[proto - FT8_PROTOCOL_FST4W_15], ft8_name[band]);
@@ -383,7 +386,7 @@ static void ft8_autorun(int instance, bool initial)
 	bool ok = internal_conn_setup(ICONN_WS_SND | ICONN_WS_EXT, &iconn[instance], instance, PORT_BASE_INTERNAL_FT8,
 	    WS_FL_IS_AUTORUN | (initial? WS_FL_INITIAL : 0),
         "usb", fst4w? FST4W_PASSBAND_LO : FT8_PASSBAND_LO, fst4w? FST4W_PASSBAND_HI : FT8_PASSBAND_HI,
-        dial_freq_kHz, ident_user, geoloc, "FT8");
+        tune_freq_kHz, ident_user, geoloc, "FT8");
 	if (!ok) {
 	    free(ident_user); free(geoloc);
         //printf("FT8 autorun: internal_conn_setup() FAILED instance=%d band=%d %s %.2f\n",

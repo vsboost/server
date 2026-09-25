@@ -5,12 +5,15 @@ const vm = require('vm');
 const source = fs.readFileSync('web/extensions/FT8/FT8.js', 'utf8');
 const commands = [];
 const buttonLabels = [];
+const tunes = [];
 const context = {
     console,
     ext_zoom: { ABS: 2 },
     ext_send: command => commands.push(command),
-    ext_tune: () => {},
+    ext_tune: (...args) => tunes.push(args),
     w3_set_value: () => {},
+    w3_select_value: () => {},
+    w3_select_get_value: () => ({ option: '137.5', last_disabled: 'FST4W-120' }),
     w3_el: () => null,
     w3_hide2: () => {},
     w3_innerHTML: (id, text) => {
@@ -32,6 +35,21 @@ assert.strictEqual(context.ft8.mode, context.ft8.FST4W_120);
 assert.deepStrictEqual(commands, [
     `SET ft8_protocol=${context.ft8.FST4W_120}`,
     'SET ft8_test'
+]);
+
+context.ft8.mode = context.ft8.FST4W_120;
+context.ft8_freq_cb('id-ft8-freq', 0, false);
+assert.deepStrictEqual(tunes.pop(), [
+    136, 'usb', context.ext_zoom.ABS, 11,
+    context.ft8.FST4W_PASSBAND_LO, context.ft8.FST4W_PASSBAND_HI
+]);
+
+context.ft8.mode = context.ft8.FT8;
+context.w3_select_get_value = () => ({ option: '7074', last_disabled: 'FT8' });
+context.ft8_freq_cb('id-ft8-freq', 0, false);
+assert.deepStrictEqual(tunes.pop(), [
+    7074, 'usb', context.ext_zoom.ABS, 11,
+    context.ft8.PASSBAND_LO, context.ft8.PASSBAND_HI
 ]);
 
 context.ft8_test_state('feeding', 42);
