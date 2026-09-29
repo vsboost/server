@@ -46,7 +46,7 @@ var ft8 = {
    log_interval: null,
    log_txt: '',
 
-   // order matches FT8.cpp:ft8_cfs[]
+   // order matches FT8.cpp:ft8_autorun_dial[] and isFT4[]
    // only add new entries to the end so as not to disturb existing values stored in config
    // yes, there are really no assigned FT4 freqs for 160m and 60m
    autorun_u: [
@@ -54,7 +54,54 @@ var ft8 = {
       'FT8-160m', 'FT8-80m', 'FT8-60m', 'FT8-40m', 'FT8-30m', 'FT8-20m', 'FT8-17m', 'FT8-15m', 'FT8-12m', 'FT8-10m', 'FT8-6m', 'FT8-8m*', 'FT8-5m*',
       'FT4-80m',            'FT4-40m', 'FT4-30m', 'FT4-20m', 'FT4-17m', 'FT4-15m', 'FT4-12m', 'FT4-10m', 'FT4-6m',
       'FST4W-15-LF', 'FST4W-15-MF', 'FST4W-30-LF', 'FST4W-30-MF', 'FST4W-60-LF', 'FST4W-60-MF', 'FST4W-120-LF', 'FST4W-120-MF',
-      'FST4W-300-LF', 'FST4W-300-MF', 'FST4W-900-LF', 'FST4W-900-MF', 'FST4W-1800-LF', 'FST4W-1800-MF'
+      'FST4W-300-LF', 'FST4W-300-MF', 'FST4W-900-LF', 'FST4W-900-MF', 'FST4W-1800-LF', 'FST4W-1800-MF',
+      'FT8-custom', 'FT4-custom'
+   ],
+
+   // Maps menu indices to FT8.cpp:ft8_autorun_dial[] array indices
+   menu_i_to_cfg_i: [
+      0,   // 0 'regular use'
+      1,   // 1 FT8-160m
+      2,   // 2 FT8-80m
+      3,   // 3 FT8-60m
+      4,   // 4 FT8-40m
+      5,   // 5 FT8-30m
+      6,   // 6 FT8-20m
+      7,   // 7 FT8-17m
+      8,   // 8 FT8-15m
+      9,   // 9 FT8-12m
+      10,  // 10 FT8-10m
+      11,  // 11 FT8-6m
+      12,  // 12 FT8-8m*
+      13,  // 13 FT8-5m*
+      
+      14,  // 14 FT4-80m (note: offset in array skips 160m/60m)
+      15,  // 15 FT4-40m
+      16,  // 16 FT4-30m
+      17,  // 17 FT4-20m
+      18,  // 18 FT4-17m
+      19,  // 19 FT4-15m
+      20,  // 20 FT4-12m
+      21,  // 21 FT4-10m
+      22,  // 22 FT4-6m
+      
+      23,  // 23 FST4W-15-LF
+      24,  // 24 FST4W-15-MF
+      25,  // 25 FST4W-30-LF
+      26,  // 26 FST4W-30-MF
+      27,  // 27 FST4W-60-LF
+      28,  // 28 FST4W-60-MF
+      29,  // 29 FST4W-120-LF
+      30,  // 30 FST4W-120-MF
+      31,  // 31 FST4W-300-LF
+      32,  // 32 FST4W-300-MF
+      33,  // 33 FST4W-900-LF
+      34,  // 34 FST4W-900-MF
+      35,  // 35 FST4W-1800-LF
+      36,  // 36 FST4W-1800-MF
+      
+      37,  // 37 FT8-custom (array index 31 in FT8.cpp)
+      38   // 38 FT4-custom (array index 32 in FT8.cpp)
    ],
 
    PREEMPT_NO: 0,
@@ -112,21 +159,21 @@ function ft8_recv(data)
 				break;
 
 			case "debug":
-            if (dbgUs) console.log(kiwi_decodeURIComponent('FT8', param[1]));
+             if (dbgUs) console.log(kiwi_decodeURIComponent('FT8', param[1]));
 				break;
 
-         case "error":
-            ft8_error(kiwi_decodeURIComponent('FT8', param[1]));
-            break;
+          case "error":
+             ft8_error(kiwi_decodeURIComponent('FT8', param[1]));
+             break;
 
-         case "test_status":
-            ft8_test_state(param[1], ft8.test_progress);
-            break;
+          case "test_status":
+             ft8_test_state(param[1], ft8.test_progress);
+             break;
 
-         case "test_progress":
-            ft8.test_progress = +param[1];
-            ft8_test_state(ft8.test_status, ft8.test_progress);
-            break;
+          case "test_progress":
+             ft8.test_progress = +param[1];
+             ft8_test_state(ft8.test_status, ft8.test_progress);
+             break;
 
 			default:
 				console.log('ft8_recv: UNKNOWN CMD '+ param[0]);
@@ -180,30 +227,30 @@ function ft8_controls_setup()
 	var controls_html =
 		w3_div('id-ft8-controls w3-text-white',
 			w3_divs('',
-            w3_col_percent('w3-valign/',
-               w3_div('',
+             w3_col_percent('w3-valign/',
+                w3_div('',
 				      w3_div('w3-medium w3-text-aqua', '<b>FT8/FT4/FST4W decoder</b>')
 				   ), 40,
-					w3_div('', 'From <b><a href="https://github.com/kgoba/ft8_lib/tree/update_to_0_2" target="_blank">ft8_lib</a></b> Karlis Goba &copy; 2018'), 45
+				   w3_div('', 'From <b><a href="https://github.com/kgoba/ft8_lib/tree/update_to_0_2" target="_blank">ft8_lib</a></b> Karlis Goba &copy; 2018'), 45
 				),
 				w3_div('id-ft8-err w3-margin-T-10 w3-padding-small w3-css-yellow w3-width-fit w3-hide'),
 				w3_inline('id-ft8-container w3-margin-T-6/w3-margin-between-16',
 
-               w3_div('',
-                  w3_inline('/w3-margin-between-16',
-                     w3_select_hier('id-ft8-freq w3-text-red w3-width-auto', '', 'freq', 'ft8.freq_idx', -1, ft8.freq_s, 'ft8_freq_cb'),
-                     w3_select('w3-text-red', '', 'mode', 'ft8.mode', ft8.FT8, ft8.mode_s, 'ft8_mode_cb')
-                  ),
-                  w3_div('w3-margin-T-4',
-                     w3_link('w3-bold', url, 'pskreporter.info')
-                  )
-               ),
+                w3_div('',
+                   w3_inline('/w3-margin-between-16',
+                      w3_select_hier('id-ft8-freq w3-text-red w3-width-auto', '', 'freq', 'ft8.freq_idx', -1, ft8.freq_s, 'ft8_freq_cb'),
+                      w3_select('w3-text-red', '', 'mode', 'ft8.mode', ft8.FT8, ft8.mode_s, 'ft8_mode_cb')
+                   ),
+                   w3_div('w3-margin-T-4',
+                      w3_link('w3-bold', url, 'pskreporter.info')
+                   )
+                ),
 
-               w3_div('cl-ft8-text', 'reporter call '+ callsign),
-               w3_div('cl-ft8-text', 'reporter grid '+ grid),
-               w3_button('w3-padding-smaller w3-css-yellow', 'Clear', 'ft8_clear_button_cb'),
-               w3_button('id-ft8-test w3-padding-smaller w3-aqua', 'Test FST4W-120', 'ft8_fst4w_test_cb')
-            )
+                w3_div('cl-ft8-text', 'reporter call '+ callsign),
+                w3_div('cl-ft8-text', 'reporter grid '+ grid),
+                w3_button('w3-padding-smaller w3-css-yellow', 'Clear', 'ft8_clear_button_cb'),
+                w3_button('id-ft8-test w3-padding-smaller w3-aqua', 'Test FST4W-120', 'ft8_fst4w_test_cb')
+             )
 			)
 		);
 	
@@ -390,7 +437,12 @@ function FT8_config_html()
                   'If the device has been configured for a mix of channels with and without waterfalls then channels without waterfalls will be used first.<br><br>' +
                   
                   'Spot decodes are available in the log (use "Log" tab above) and are listed on <a href="https://pskreporter.info/pskmap.html" target="_blank">pskreporter.info</a><br>' +
-                  'The "Reporter" fields above must be set to valid values for proper spot entry into the <a href="https://pskreporter.info/pskmap.html" target="_blank">pskreporter.info</a> database.'),
+                  'The "Reporter" fields above must be set to valid values for proper spot entry into the <a href="https://pskreporter.info/pskmap.html" target="_blank">pskreporter.info</a> database.<br><br>' +
+                  'Select "FT8-custom" or "FT4-custom" to enter an arbitrary frequency in the field below.<br><br>' +
+                  
+                  'Uploaded spots are highlighted in green. Spots are only uploaded once every 60 minutes. ' +
+                  'The <i>age</i> column shows, in minutes, how long it has been since the last upload.'
+               ),
                
                w3_div('w3-margin-T-10 w3-valign',
                   '<header class="id-ft8-warn-full w3-container w3-yellow"><h6>' +
@@ -419,6 +471,8 @@ function FT8_config_html()
 	      s2 +=
 	         w3_div('',
 	            w3_select_get_param('w3-margin-right', 'Autorun '+ i, 'FT8 band', 'ft8.autorun'+ i, ft8.autorun_u, 'ft8_autorun_select_cb'),
+	            w3_input_get('id-ft8-custom'+ i +' w3-margin-T-4/w3-label-not-bold/|padding:0;width:auto|size=8',
+	               'custom freq', 'ft8.custom'+ i, 'w3_float_set_cfg_cb|2', 0),
 	            w3_select_get_param('w3-margin-right w3-margin-T-8', '', 'preemptible?', 'ft8.preempt'+ i, ft8.preempt_u, 'ft8_autorun_select_cb')
 	         );
 	   }
@@ -514,7 +568,7 @@ function FT8_help(show)
    if (show) {
       var s =
          w3_text('w3-medium w3-bold w3-text-aqua', 'FT8/FT4/FST4W decoder help') +
-         '<br>FST4W is a weak-signal beacon mode for LF/MF operation. Select one of the 15, 30, 60, 120, 300, 900, or 1800 second T/R periods; longer periods improve sensitivity while reducing update rate. ' +
+         '<br>FST4W is a weak-signal beacon mode for LF/MF operation. Select one of the 15, 30, 60, 120, 300, 900, or 1800 second T/R periods; longer periods improve sensitivity while reducing update rate.' +
          'FST4W uses the standard 1400-1600 Hz audio passband and LF/MF frequency presets. The receiver tunes its 1500 Hz BFO below the selected center frequency.<br><br>' +
          '<br>Spots are uploaded to pskreporter.info if the <i>reporter call</i> and <i>reporter grid</i> ' +
          'fields on the admin page, extensions tab, FT8 subtab have valid entries. ' +
